@@ -6,22 +6,24 @@ from typing import Callable, Optional
 import cairo
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, GLib, Gtk
 
 
-class AnimatedEye(Gtk.DrawingArea):
-    """60 FPS Vector Animated Eye matching Insomnia Motion.swift and EyeMarkGeometry."""
+class AnimatedEye(Gtk.Image):
+    """60 FPS Vector Animated Eye using standalone Cairo surfaces and GdkPixbuf."""
 
-    # 24-unit coordinate grid from EyeLensGeometry
     DESIGN_SIZE = 24.0
 
-    def __init__(self, size: int = 96) -> None:
+    def __init__(self, size: int = 100) -> None:
         super().__init__()
-        self.set_size_request(size, int(size * 0.8))
-        self.connect("draw", self._on_draw)
+        self.width = size
+        self.height = int(size * 0.8)
+
+        self._surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, self.width, self.height)
 
         # Animation state
-        self._progress: float = 0.0  # 0.0 = closed / resting, 1.0 = wide open
+        self._progress: float = 0.0  # 0.0 = closed / asleep, 1.0 = wide open
         self._target_progress: float = 0.0
         self._velocity: float = 0.0
 
@@ -33,6 +35,8 @@ class AnimatedEye(Gtk.DrawingArea):
         self._animating: bool = False
         self._last_tick_time: float = time.monotonic()
         self._timer_id: Optional[int] = None
+
+        self._render_frame()
 
     def set_awake(self, awake: bool) -> None:
         new_target = 1.0 if awake else 0.0
@@ -84,23 +88,24 @@ class AnimatedEye(Gtk.DrawingArea):
             self._velocity = 0.0
             self._animating = False
             self._timer_id = None
-            self.queue_draw()
-            return False  # Stop GLib timeout
+            self._render_frame()
+            return False
 
-        self.queue_draw()
+        self._render_frame()
         return True
 
-    def _on_draw(self, widget: Gtk.Widget, cr: cairo.Context) -> bool:
-        width = widget.get_allocated_width()
-        height = widget.get_allocated_height()
-
+    def _render_frame(self) -> None:
+        cr = cairo.Context(self._surface)
+        cr.set_operator(cairo.OPERATOR_CLEAR)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
         cr.set_antialias(cairo.ANTIALIAS_SUBPIXEL)
 
-        # Map 24-unit design grid centered into widget rect
-        scale = min(width, height) / self.DESIGN_SIZE
+        # Scale 24-unit design grid centered into surface rect
+        scale = min(self.width, self.height) / self.DESIGN_SIZE
         side = self.DESIGN_SIZE * scale
-        offset_x = (width - side) / 2.0
-        offset_y = (height - side) / 2.0
+        offset_x = (self.width - side) / 2.0
+        offset_y = (self.height - side) / 2.0
 
         cr.translate(offset_x, offset_y)
         cr.scale(scale, scale)
@@ -117,8 +122,7 @@ class AnimatedEye(Gtk.DrawingArea):
 
         line_width = 1.4
 
-        # 1. Draw Lashes
-        # Upper lashes (visible when open)
+        # 1. Lashes
         if p > 0.05:
             cr.save()
             cr.set_source_rgba(0.9, 0.9, 0.9, p)
@@ -137,7 +141,6 @@ class AnimatedEye(Gtk.DrawingArea):
             cr.stroke()
             cr.restore()
 
-        # Lower lashes (visible when closed/asleep)
         if p < 0.95:
             cr.save()
             cr.set_source_rgba(0.55, 0.55, 0.55, 1.0 - p)
@@ -156,27 +159,23 @@ class AnimatedEye(Gtk.DrawingArea):
             cr.stroke()
             cr.restore()
 
-        # 2. Draw Lens Interior & Pupil
+        # 2. Lens Interior & Pupil
         cr.save()
-        # Define almond path
         cr.move_to(*corner_left)
         cr.curve_to(*upper_c1, *upper_c2, *corner_right)
         cr.curve_to(*lower_c1, *lower_c2, *corner_left)
         cr.close_path()
-
-        # Clip inside lens
         cr.clip()
 
-        # Background fill inside lens
+        # Interior fill
         cr.set_source_rgba(0.12, 0.12, 0.14, 1.0)
         cr.paint()
 
-        # Pupil (appears as eyelid opens)
         if p > 0.02:
             pupil_x, pupil_y = 12.0, 12.0
             pupil_r = 4.0 * min(1.0, p * 1.2)
 
-            # Iris outer glow
+            # Iris glow
             cr.set_source_rgba(0.35, 0.40, 0.95, p * 0.7)
             cr.arc(pupil_x, pupil_y, pupil_r + 0.8, 0, 2 * math.pi)
             cr.fill()
@@ -191,8 +190,7 @@ class AnimatedEye(Gtk.DrawingArea):
             cr.arc(13.8, 10.2, 1.3, 0, 2 * math.pi)
             cr.fill()
 
-        # Eyelid shading (curves down over pupil when closing)
-        # Interpolate between lower lid curve and upper lid curve
+        # Eyelid shading
         cur_c1_y = upper_c1[1] * p + lower_c1[1] * (1.0 - p)
         cur_c2_y = upper_c2[1] * p + lower_c2[1] * (1.0 - p)
 
@@ -202,10 +200,9 @@ class AnimatedEye(Gtk.DrawingArea):
         cr.close_path()
         cr.set_source_rgba(0.18, 0.18, 0.20, 1.0)
         cr.fill()
-
         cr.restore()
 
-        # 3. Outer Lens Outline Stroke
+        # 3. Outer Lens Outline
         cr.save()
         cr.move_to(*corner_left)
         cr.curve_to(*upper_c1, *upper_c2, *corner_right)
@@ -213,21 +210,31 @@ class AnimatedEye(Gtk.DrawingArea):
         cr.close_path()
 
         if p > 0.5:
-            # Active vivid outline
             cr.set_source_rgba(0.95, 0.95, 0.95, 0.95)
         else:
-            # Resting subtle outline
             cr.set_source_rgba(0.60, 0.60, 0.60, 0.70)
 
         cr.set_line_width(line_width)
         cr.stroke()
         cr.restore()
 
-        return True
+        # Update Gtk.Image pixbuf
+        data = self._surface.get_data()
+        stride = self._surface.get_stride()
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+            data,
+            GdkPixbuf.Colorspace.RGB,
+            True,
+            8,
+            self.width,
+            self.height,
+            stride,
+        )
+        self.set_from_pixbuf(pixbuf)
 
 
-class HoldToEndButton(Gtk.EventBox):
-    """Hold-to-End button with 0.6s progress ring matching macOS HoldToEndButton.swift."""
+class HoldToEndButton(Gtk.Button):
+    """Hold-to-End button with 0.6s animated circular progress ring."""
 
     def __init__(self, on_complete: Callable[[], None], hold_duration: float = 0.6) -> None:
         super().__init__()
@@ -239,26 +246,78 @@ class HoldToEndButton(Gtk.EventBox):
         self._timer_id: Optional[int] = None
         self._last_tick: float = time.monotonic()
 
-        self.area = Gtk.DrawingArea()
-        self.area.set_size_request(-1, 46)
-        self.area.connect("draw", self._on_draw)
-        self.add(self.area)
+        self.get_style_context().add_class("destructive-action")
+        self.set_size_request(-1, 46)
 
-        self.set_events(
-            self.get_events()
-            | gi.repository.Gdk.EventMask.BUTTON_PRESS_MASK
-            | gi.repository.Gdk.EventMask.BUTTON_RELEASE_MASK
-            | gi.repository.Gdk.EventMask.LEAVE_NOTIFY_MASK
-        )
+        # Internal Box holding ring image and text
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        box.set_halign(Gtk.Align.CENTER)
+
+        self.image_ring = Gtk.Image()
+        self.lbl_text = Gtk.Label(label="Hold to End Session")
+        self.lbl_text.set_markup("<span weight='bold'>Hold to End Session</span>")
+
+        box.pack_start(self.image_ring, False, False, 0)
+        box.pack_start(self.lbl_text, False, False, 0)
+        self.add(box)
+
+        self._render_ring()
 
         self.connect("button-press-event", self._on_press)
         self.connect("button-release-event", self._on_release)
         self.connect("leave-notify-event", self._on_leave)
 
+    def _render_ring(self) -> None:
+        size = 22
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+        cr = cairo.Context(surface)
+        cr.set_antialias(cairo.ANTIALIAS_SUBPIXEL)
+
+        cx, cy, r = size / 2.0, size / 2.0, (size / 2.0) - 2.5
+
+        # Background circular track
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.20)
+        cr.set_line_width(2.2)
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.stroke()
+
+        # Active progress ring
+        if self._progress > 0.0:
+            cr.set_source_rgba(1.0, 0.35, 0.35, 1.0)
+            cr.set_line_width(2.4)
+            cr.set_line_cap(cairo.LINE_CAP_ROUND)
+            start_angle = -math.pi / 2
+            end_angle = start_angle + self._progress * 2 * math.pi
+            cr.arc(cx, cy, r, start_angle, end_angle)
+            cr.stroke()
+
+        # Center X glyph
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9)
+        cr.set_line_width(1.6)
+        x_sz = 3.2
+        cr.move_to(cx - x_sz, cy - x_sz)
+        cr.line_to(cx + x_sz, cy + x_sz)
+        cr.move_to(cx + x_sz, cy - x_sz)
+        cr.line_to(cx - x_sz, cy + x_sz)
+        cr.stroke()
+
+        data = surface.get_data()
+        pixbuf = GdkPixbuf.Pixbuf.new_from_data(
+            data,
+            GdkPixbuf.Colorspace.RGB,
+            True,
+            8,
+            size,
+            size,
+            surface.get_stride(),
+        )
+        self.image_ring.set_from_pixbuf(pixbuf)
+
     def _on_press(self, widget: Gtk.Widget, event) -> bool:
         if event.button == 1:
             self._holding = True
             self._last_tick = time.monotonic()
+            self.lbl_text.set_markup("<span weight='bold'>Holding to End...</span>")
             if self._timer_id is None:
                 self._timer_id = GLib.timeout_add(16, self._on_tick)
             return True
@@ -278,10 +337,11 @@ class HoldToEndButton(Gtk.EventBox):
     def _cancel_hold(self) -> None:
         self._holding = False
         self._progress = 0.0
+        self.lbl_text.set_markup("<span weight='bold'>Hold to End Session</span>")
         if self._timer_id:
             GLib.source_remove(self._timer_id)
             self._timer_id = None
-        self.area.queue_draw()
+        self._render_ring()
 
     def _on_tick(self) -> bool:
         if not self._holding:
@@ -297,83 +357,10 @@ class HoldToEndButton(Gtk.EventBox):
             self._progress = 1.0
             self._holding = False
             self._timer_id = None
-            self.area.queue_draw()
-            # Trigger session cancellation
+            self._render_ring()
+            self.lbl_text.set_markup("<span weight='bold'>Ended!</span>")
             self.on_complete()
             return False
 
-        self.area.queue_draw()
-        return True
-
-    def _on_draw(self, widget: Gtk.Widget, cr: cairo.Context) -> bool:
-        width = widget.get_allocated_width()
-        height = widget.get_allocated_height()
-
-        cr.set_antialias(cairo.ANTIALIAS_SUBPIXEL)
-
-        # Background rounded pill
-        r = 8.0
-        cr.new_sub_path()
-        cr.arc(width - r, r, r, -math.pi / 2, 0)
-        cr.arc(width - r, height - r, r, 0, math.pi / 2)
-        cr.arc(r, height - r, r, math.pi / 2, math.pi)
-        cr.arc(r, r, r, math.pi, 3 * math.pi / 2)
-        cr.close_path()
-
-        if self._holding:
-            cr.set_source_rgba(0.28, 0.12, 0.12, 1.0)
-        else:
-            cr.set_source_rgba(0.20, 0.16, 0.16, 0.8)
-        cr.fill_preserve()
-
-        # Outline border
-        cr.set_source_rgba(0.6, 0.25, 0.25, 0.5)
-        cr.set_line_width(1.0)
-        cr.stroke()
-
-        # Draw animated progress ring at left
-        ring_cx = 24.0
-        ring_cy = height / 2.0
-        ring_r = 10.0
-
-        # Background ring
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.15)
-        cr.set_line_width(2.4)
-        cr.arc(ring_cx, ring_cy, ring_r, 0, 2 * math.pi)
-        cr.stroke()
-
-        # Active progress ring
-        if self._progress > 0.0:
-            cr.set_source_rgba(0.95, 0.30, 0.30, 1.0)
-            cr.set_line_width(2.4)
-            cr.set_line_cap(cairo.LINE_CAP_ROUND)
-            start_angle = -math.pi / 2
-            end_angle = start_angle + self._progress * 2 * math.pi
-            cr.arc(ring_cx, ring_cy, ring_r, start_angle, end_angle)
-            cr.stroke()
-
-        # Inner cross glyph in ring
-        cr.save()
-        cr.set_source_rgba(0.9, 0.9, 0.9, 0.9)
-        cr.set_line_width(1.8)
-        cross_size = 3.5
-        cr.move_to(ring_cx - cross_size, ring_cy - cross_size)
-        cr.line_to(ring_cx + cross_size, ring_cy + cross_size)
-        cr.move_to(ring_cx + cross_size, ring_cy - cross_size)
-        cr.line_to(ring_cx - cross_size, ring_cy + cross_size)
-        cr.stroke()
-        cr.restore()
-
-        # Text label
-        cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(13.0)
-        cr.set_source_rgba(0.95, 0.85, 0.85, 1.0)
-
-        label_text = "Hold to End Session" if not self._holding else "Holding to End..."
-        ext = cr.text_extents(label_text)
-        text_x = ring_cx + ring_r + 14.0
-        text_y = ring_cy + ext.height / 2.0
-        cr.move_to(text_x, text_y)
-        cr.show_text(label_text)
-
+        self._render_ring()
         return True

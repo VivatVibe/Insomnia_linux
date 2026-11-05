@@ -77,7 +77,7 @@ Version: $PKG_VERSION
 Section: utils
 Priority: optional
 Architecture: $PKG_ARCH
-Depends: python3, python3-gi, python3-dbus, python3-psutil, python3-dasbus, gir1.2-gtk-3.0
+Depends: python3, python3-gi, python3-dbus, python3-psutil, python3-dasbus, python3-cairo, python3-gi-cairo, gir1.2-gtk-3.0
 Maintainer: VivatVibe <contact@vivatvibe.com>
 Installed-Size: $INSTALLED_SIZE
 Homepage: https://github.com/VivatVibe/Insomnia_linux
