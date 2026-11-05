@@ -12,5 +12,6 @@
     "51"
   ],
   "url": "https://github.com/VivatVibe/Insomnia_linux",
+  "settings-schema": "org.gnome.shell.extensions.insomnia",
   "version": 1
 }

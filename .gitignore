@@ -16,3 +16,5 @@ __pycache__/
 # Packaging
 build/
 dist/
+*.shell-extension.zip
+gschemas.compiled

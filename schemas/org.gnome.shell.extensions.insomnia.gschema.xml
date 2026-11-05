@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="insomnia">
+  <schema id="org.gnome.shell.extensions.insomnia" path="/org/gnome/shell/extensions/insomnia/">
+    <key name="low-power-floor" type="i">
+      <default>40</default>
+      <summary>Low power battery floor percentage</summary>
+      <description>Switch to power-saver profile when battery falls below this level.</description>
+    </key>
+    <key name="end-floor" type="i">
+      <default>0</default>
+      <summary>End session battery floor percentage</summary>
+      <description>Automatically end keep-awake session when battery falls below this percentage (0 to disable).</description>
+    </key>
+    <key name="prevent-lid-sleep" type="b">
+      <default>true</default>
+      <summary>Prevent sleep when laptop lid is closed</summary>
+      <description>Inhibit logind handle-lid-switch during active sessions.</description>
+    </key>
+    <key name="auto-power-saver" type="b">
+      <default>true</default>
+      <summary>Auto activate power-saver profile</summary>
+      <description>Automatically switch power profiles daemon on low battery.</description>
+    </key>
+  </schema>
+</schemalist>

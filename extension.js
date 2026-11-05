@@ -8,52 +8,108 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import { parseDurationSeconds, formatTimeRemaining, LogindInhibitor } from './lib/utils.js';
 
-const InsomniaIface = `
-<node>
-  <interface name="org.vivatvibe.Insomnia">
-    <method name="StartSession">
-      <arg type="s" direction="in" name="duration"/>
-      <arg type="b" direction="out" name="success"/>
-      <arg type="s" direction="out" name="remaining"/>
-    </method>
-    <method name="ExtendSession">
-      <arg type="s" direction="in" name="duration"/>
-      <arg type="b" direction="out" name="success"/>
-      <arg type="s" direction="out" name="remaining"/>
-    </method>
-    <method name="EndSession">
-      <arg type="b" direction="out" name="success"/>
-    </method>
-    <method name="GetState">
-      <arg type="b" direction="out" name="active"/>
-      <arg type="x" direction="out" name="remaining_seconds"/>
-      <arg type="s" direction="out" name="formatted_remaining"/>
-      <arg type="s" direction="out" name="lid_state"/>
-      <arg type="s" direction="out" name="battery_str"/>
-    </method>
-    <method name="OpenSettings">
-      <arg type="b" direction="out" name="success"/>
-    </method>
-    <method name="OpenControlCenter">
-      <arg type="b" direction="out" name="success"/>
-    </method>
-    <method name="Quit">
-      <arg type="b" direction="out" name="success"/>
-    </method>
-    <signal name="StateChanged">
-      <arg type="b" name="active"/>
-      <arg type="x" name="remaining_seconds"/>
-      <arg type="s" name="formatted_remaining"/>
-      <arg type="s" name="lid_state"/>
-      <arg type="s" name="battery_str"/>
-    </signal>
-  </interface>
-</node>`;
+// UPower & PowerProfiles Monitor
+class PowerMonitor {
+    constructor(settings, onEmergencyEnd) {
+        this._settings = settings;
+        this._onEmergencyEnd = onEmergencyEnd;
+        this._bus = Gio.DBus.system;
+        this._upower = null;
+        this._batteryPercent = 100;
+        this._onBattery = false;
+        this._lidIsClosed = false;
+        this._initUPower();
+    }
 
-const InsomniaProxy = Gio.DBusProxy.makeProxyWrapper(InsomniaIface);
+    _initUPower() {
+        try {
+            this._upower = new Gio.DBusProxy({
+                g_connection: this._bus,
+                g_name: 'org.freedesktop.UPower',
+                g_object_path: '/org/freedesktop/UPower',
+                g_interface_name: 'org.freedesktop.UPower',
+            });
+            this._upower.init(null);
+            this._updateProperties();
 
-// Vector Eye Mark drawing widget matching EyeMarkGeometry on 24x24 grid
+            this._upower.connect('g-properties-changed', () => {
+                this._updateProperties();
+            });
+        } catch (e) {
+            logError(e, 'Insomnia: Failed to initialize UPower proxy');
+        }
+    }
+
+    _updateProperties() {
+        if (!this._upower) return;
+        this._lidIsClosed = this._upower.get_cached_property('LidIsClosed')?.unpack() ?? false;
+        this._onBattery = this._upower.get_cached_property('OnBattery')?.unpack() ?? false;
+
+        // Check DisplayDevice for battery percentage
+        try {
+            const devProxy = new Gio.DBusProxy({
+                g_connection: this._bus,
+                g_name: 'org.freedesktop.UPower',
+                g_object_path: '/org/freedesktop/UPower/devices/DisplayDevice',
+                g_interface_name: 'org.freedesktop.UPower.Device',
+            });
+            devProxy.init(null);
+            const pct = devProxy.get_cached_property('Percentage')?.unpack();
+            if (pct !== undefined) {
+                this._batteryPercent = Math.round(pct);
+            }
+        } catch (e) {
+            // Display device not found (e.g. desktop)
+        }
+
+        this._enforceBatteryRules();
+    }
+
+    _enforceBatteryRules() {
+        if (!this._onBattery) return;
+
+        const endFloor = this._settings.get_int('end-floor');
+        if (endFloor > 0 && this._batteryPercent <= endFloor) {
+            if (this._onEmergencyEnd) {
+                this._onEmergencyEnd();
+            }
+            return;
+        }
+
+        const autoSaver = this._settings.get_boolean('auto-power-saver');
+        const lowPowerFloor = this._settings.get_int('low-power-floor');
+        if (autoSaver && this._batteryPercent <= lowPowerFloor) {
+            this.setPowerProfile('power-saver');
+        }
+    }
+
+    setPowerProfile(profile) {
+        try {
+            const proxy = new Gio.DBusProxy({
+                g_connection: this._bus,
+                g_name: 'net.hadess.PowerProfiles',
+                g_object_path: '/net/hadess/PowerProfiles',
+                g_interface_name: 'org.freedesktop.DBus.Properties',
+            });
+            proxy.init(null);
+            proxy.Set('(ssv)', [
+                'net.hadess.PowerProfiles',
+                'ActiveProfile',
+                new GLib.Variant('s', profile),
+            ]);
+        } catch (e) {
+            // PowerProfiles daemon not available
+        }
+    }
+
+    get lidIsClosed() { return this._lidIsClosed; }
+    get onBattery() { return this._onBattery; }
+    get batteryPercent() { return this._batteryPercent; }
+}
+
+// Vector Eye Mark matching EyeMarkGeometry on 24x24 grid
 const EyeMarkArea = GObject.registerClass(
 class EyeMarkArea extends St.DrawingArea {
     _init(params = {}) {
@@ -269,12 +325,19 @@ class HoldToEndButton extends St.DrawingArea {
 // Main Panel Indicator Button
 const InsomniaIndicator = GObject.registerClass(
 class InsomniaIndicator extends PanelMenu.Button {
-    _init() {
+    _init(extension) {
         super._init(0.5, 'Insomnia Keep-Awake', false);
+        this._ext = extension;
+        this._settings = extension.getSettings();
 
         this._mode = 'IDLE'; // 'IDLE' | 'ENTERING' | 'RUNNING'
-        this._remainingSec = 0;
-        this._localTimer = null;
+        this._remainingSeconds = 0;
+        this._timerId = null;
+
+        this._inhibitor = new LogindInhibitor();
+        this._power = new PowerMonitor(this._settings, () => {
+            this._endSession();
+        });
 
         // Container box
         this._box = new St.BoxLayout({
@@ -333,11 +396,8 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._endButton.set_visible(false);
         this._box.add_child(this._endButton);
 
-        // Setup Right-Click Popup Menu
+        // 5. Popup Menu
         this._buildMenu();
-
-        // Connect D-Bus
-        this._initDBus();
     }
 
     _createPillEntry(hint) {
@@ -373,16 +433,16 @@ class InsomniaIndicator extends PanelMenu.Button {
 
         // Quick Durations
         const quickDurations = [
-            ['15 Minutes', '15m'],
-            ['30 Minutes', '30m'],
-            ['1 Hour', '1h'],
-            ['2 Hours', '2h'],
-            ['4 Hours', '4h'],
-            ['8 Hours', '8h'],
+            ['15 Minutes', 900],
+            ['30 Minutes', 1800],
+            ['1 Hour', 3600],
+            ['2 Hours', 7200],
+            ['4 Hours', 14400],
+            ['8 Hours', 28800],
         ];
-        for (const [label, dur] of quickDurations) {
+        for (const [label, secs] of quickDurations) {
             this.menu.addAction(label, () => {
-                this._startDuration(dur);
+                this._startSession(secs);
             });
         }
 
@@ -392,99 +452,9 @@ class InsomniaIndicator extends PanelMenu.Button {
             this._endSession();
         });
 
-        this.menu.addAction('Insomnia Control Center…', () => {
-            if (this._proxy) this._proxy.OpenControlCenterRemote(() => {});
+        this.menu.addAction('Preferences…', () => {
+            this._ext.openPreferences();
         });
-
-        this.menu.addAction('Settings…', () => {
-            if (this._proxy) this._proxy.OpenSettingsRemote(() => {});
-        });
-
-        this.menu.addAction('Quit Insomnia', () => {
-            if (this._proxy) this._proxy.QuitRemote(() => {});
-        });
-    }
-
-    _initDBus() {
-        try {
-            this._proxy = new InsomniaProxy(
-                Gio.DBus.session,
-                'org.vivatvibe.Insomnia',
-                '/org/vivatvibe/Insomnia'
-            );
-
-            this._sigId = this._proxy.connectSignal('StateChanged', (_proxy, _sender, [active, rem_sec, rem_str, lid, batt]) => {
-                this._updateState(active, rem_sec, rem_str, lid, batt);
-            });
-
-            // Initial fetch
-            this._proxy.GetStateRemote(([active, rem_sec, rem_str, lid, batt], err) => {
-                if (!err) {
-                    this._updateState(active, rem_sec, rem_str, lid, batt);
-                }
-            });
-        } catch (err) {
-            logError(err, 'Failed to connect Insomnia D-Bus proxy');
-        }
-    }
-
-    _updateState(active, remSec, remStr, lidState, battStr) {
-        this._remainingSec = Number(remSec);
-
-        this._statusTitleItem.label.text = active
-            ? `Insomnia: Active (${remStr} remaining)`
-            : 'Insomnia: Idle';
-        this._statusDetailItem.label.text = `Lid: ${lidState} · Battery: ${battStr}`;
-
-        if (active) {
-            this._mode = 'RUNNING';
-            this._eyeMark.setRunning(true);
-            this._pillsBox.set_visible(false);
-            this._countLabel.set_text(remStr);
-            this._countLabel.set_visible(true);
-            this._endButton.set_visible(true);
-            this._startLocalCountdown();
-        } else {
-            if (this._mode !== 'ENTERING') {
-                this._mode = 'IDLE';
-                this._eyeMark.setRunning(false);
-                this._pillsBox.set_visible(false);
-                this._countLabel.set_visible(false);
-                this._endButton.set_visible(false);
-            }
-            this._stopLocalCountdown();
-        }
-    }
-
-    _startLocalCountdown() {
-        this._stopLocalCountdown();
-        this._localTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-            if (this._remainingSec > 0) {
-                this._remainingSec -= 1;
-                this._countLabel.set_text(this._formatSeconds(this._remainingSec));
-                return GLib.SOURCE_CONTINUE;
-            }
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _stopLocalCountdown() {
-        if (this._localTimer) {
-            GLib.source_remove(this._localTimer);
-            this._localTimer = null;
-        }
-    }
-
-    _formatSeconds(totalSec) {
-        if (totalSec <= 0) return '00:00';
-        const hrs = Math.floor(totalSec / 3600);
-        const mins = Math.floor((totalSec % 3600) / 60);
-        const secs = totalSec % 60;
-        const pad = (n) => String(n).padStart(2, '0');
-        if (hrs > 0) {
-            return `${hrs}:${pad(mins)}:${pad(secs)}`;
-        }
-        return `${pad(mins)}:${pad(secs)}`;
     }
 
     _togglePills() {
@@ -504,12 +474,15 @@ class InsomniaIndicator extends PanelMenu.Button {
 
     _cancelPills() {
         this._pillsBox.set_visible(false);
-        if (this._proxy) {
-            this._proxy.GetStateRemote(([active, rem_sec, rem_str, lid, batt], err) => {
-                if (!err) {
-                    this._updateState(active, rem_sec, rem_str, lid, batt);
-                }
-            });
+        if (this._inhibitor.isActive) {
+            this._mode = 'RUNNING';
+            this._countLabel.set_visible(true);
+            this._endButton.set_visible(true);
+        } else {
+            this._mode = 'IDLE';
+            this._countLabel.set_visible(false);
+            this._endButton.set_visible(false);
+            this._eyeMark.setRunning(false);
         }
     }
 
@@ -518,49 +491,97 @@ class InsomniaIndicator extends PanelMenu.Button {
         const h = this._hoursEntry.get_text().trim();
         const m = this._minsEntry.get_text().trim();
 
-        let durParts = [];
-        if (d && !isNaN(d)) durParts.push(`${d}d`);
-        if (h && !isNaN(h)) durParts.push(`${h}h`);
-        if (m && !isNaN(m)) durParts.push(`${m}m`);
-
-        const durStr = durParts.length > 0 ? durParts.join(' ') : '1h';
-        this._startDuration(durStr);
-    }
-
-    _startDuration(durStr) {
-        if (!this._proxy) return;
-
-        if (this._mode === 'RUNNING') {
-            this._proxy.ExtendSessionRemote(durStr, ([ok, msg], err) => {
-                this._cancelPills();
-            });
+        const secs = parseDurationSeconds(d, h, m);
+        if (this._inhibitor.isActive) {
+            this._extendSession(secs);
         } else {
-            this._proxy.StartSessionRemote(durStr, ([ok, msg], err) => {
-                this._cancelPills();
-            });
+            this._startSession(secs);
         }
     }
 
+    _startSession(durationSeconds) {
+        this._remainingSeconds = durationSeconds;
+        this._pillsBox.set_visible(false);
+
+        const preventLid = this._settings.get_boolean('prevent-lid-sleep');
+        this._inhibitor.acquire(preventLid, () => {
+            this._updateMenuStatus();
+        });
+
+        this._mode = 'RUNNING';
+        this._eyeMark.setRunning(true);
+        this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
+        this._countLabel.set_visible(true);
+        this._endButton.set_visible(true);
+
+        this._startTimer();
+        this._updateMenuStatus();
+    }
+
+    _extendSession(additionalSeconds) {
+        this._remainingSeconds += additionalSeconds;
+        this._pillsBox.set_visible(false);
+        this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
+        this._updateMenuStatus();
+    }
+
     _endSession() {
-        if (this._proxy) {
-            this._proxy.EndSessionRemote(() => {
-                this._updateState(false, 0, '00:00', 'open', 'AC');
-            });
+        this._stopTimer();
+        this._inhibitor.release();
+        this._remainingSeconds = 0;
+        this._mode = 'IDLE';
+
+        this._eyeMark.setRunning(false);
+        this._pillsBox.set_visible(false);
+        this._countLabel.set_visible(false);
+        this._endButton.set_visible(false);
+
+        this._updateMenuStatus();
+    }
+
+    _startTimer() {
+        this._stopTimer();
+        this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            if (this._remainingSeconds > 0) {
+                this._remainingSeconds -= 1;
+                this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
+                return GLib.SOURCE_CONTINUE;
+            }
+            this._endSession();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _stopTimer() {
+        if (this._timerId) {
+            GLib.source_remove(this._timerId);
+            this._timerId = null;
+        }
+    }
+
+    _updateMenuStatus() {
+        const lid = this._power.lidIsClosed ? 'Closed' : 'Open';
+        const batt = this._power.onBattery ? `${this._power.batteryPercent}%` : 'AC Power';
+
+        if (this._inhibitor.isActive) {
+            this._statusTitleItem.label.text = `Insomnia: Active (${formatTimeRemaining(this._remainingSeconds)} left)`;
+            this._statusDetailItem.label.text = `Lid: ${lid} · Battery: ${batt} · Sleep Blocked`;
+        } else {
+            this._statusTitleItem.label.text = 'Insomnia: Idle';
+            this._statusDetailItem.label.text = `Lid: ${lid} · Battery: ${batt}`;
         }
     }
 
     destroy() {
-        this._stopLocalCountdown();
-        if (this._sigId && this._proxy) {
-            this._proxy.disconnectSignal(this._sigId);
-        }
+        this._stopTimer();
+        this._inhibitor.release();
         super.destroy();
     }
 });
 
 export default class InsomniaExtension extends Extension {
     enable() {
-        this._indicator = new InsomniaIndicator();
+        this._indicator = new InsomniaIndicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'right');
     }
 

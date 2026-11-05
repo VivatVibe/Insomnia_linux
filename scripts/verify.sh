@@ -1,41 +1,34 @@
 #!/bin/bash
-# Comprehensive verification script for Insomnia Linux
+# Verification script for Insomnia Standalone GNOME Shell Extension
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=========================================="
-echo " Running Insomnia Linux Verification Suite"
-echo "=========================================="
+echo "=========================================================="
+echo " Running Insomnia Standalone Extension Verification Suite"
+echo "=========================================================="
 
 cd "$REPO_ROOT"
 
-# 1. Unit Tests
-echo "==> [1/4] Running unit test suite..."
-PYTHONPATH=. python3 -m unittest discover -s tests -v
+# 1. Compile Schema
+echo "==> [1/4] Compiling GSettings schema..."
+glib-compile-schemas schemas/
+echo "    Schema compiled cleanly."
 
-# 2. CLI Functional Verification
-echo "==> [2/4] Testing CLI session and inhibitor..."
-PYTHONPATH=. python3 -m insomnia status --json >/dev/null
-PYTHONPATH=. python3 -m insomnia start 5m
-PYTHONPATH=. python3 -m insomnia extend 2m
-PYTHONPATH=. python3 -m insomnia status
-PYTHONPATH=. python3 -m insomnia end
+# 2. Run GJS Unit Tests
+echo "==> [2/4] Running standalone JavaScript unit tests..."
+gjs -m tests/test_standalone.js
 
-# 3. Backstop Reconciliation Verification
-echo "==> [3/4] Testing Backstop reconciliation..."
-PYTHONPATH=. python3 -m insomnia backstop --force
-echo "    Backstop finished with exit code 0."
+# 3. Pack Extension Validation
+echo "==> [3/4] Testing extension bundle packing..."
+gnome-extensions pack . --force
+echo "    Bundle generated: insomnia@vivatvibe.github.com.shell-extension.zip"
 
-# 4. Installation & Systemd Units
-echo "==> [4/4] Testing installation script..."
+# 4. Install & Verification
+echo "==> [4/4] Testing extension installer..."
 "$REPO_ROOT/scripts/install.sh"
 
-echo "==> Checking installed binary and timer..."
-"$HOME/.local/bin/insomnia" status
-systemctl --user is-active insomnia-backstop.timer || true
-
-echo "=========================================="
-echo " All Insomnia Linux Verifications PASSED!"
-echo "=========================================="
+echo "=========================================================="
+echo " All Insomnia Standalone Extension Verifications PASSED!"
+echo "=========================================================="

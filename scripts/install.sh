@@ -1,84 +1,38 @@
 #!/bin/bash
-# Install Insomnia for Linux GNOME
-# Safe, idempotent, non-root per-user installation.
+# Install Insomnia Standalone GNOME Shell Extension
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-echo "==> Installing Insomnia for Linux..."
-
-BIN_DIR="$HOME/.local/bin"
-DATA_DIR="$HOME/.local/share/insomnia"
-APP_DIR="$HOME/.local/share/applications"
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-ICON_BASE="$HOME/.local/share/icons/hicolor"
-
-mkdir -p "$BIN_DIR" "$DATA_DIR/lib" "$APP_DIR" "$SYSTEMD_USER_DIR"
-
-# 1. Copy application files
-echo "==> Installing python package to $DATA_DIR/lib..."
-rm -rf "$DATA_DIR/lib/insomnia"
-cp -r "$REPO_ROOT/insomnia" "$DATA_DIR/lib/"
-cp -r "$REPO_ROOT/Resources" "$DATA_DIR/"
-
-# 2. Install executable launcher
-echo "==> Installing launcher to $BIN_DIR/insomnia..."
-cat > "$BIN_DIR/insomnia" << 'EOF'
-#!/bin/bash
-export PYTHONPATH="$HOME/.local/share/insomnia/lib:${PYTHONPATH:-}"
-exec /usr/bin/python3 -m insomnia "$@"
-EOF
-chmod 0755 "$BIN_DIR/insomnia"
-
-# Ensure ~/.local/bin is in PATH in ~/.bashrc if not already present
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-  if [[ -f "$HOME/.bashrc" ]] && ! grep -q 'PATH=.*\.local/bin' "$HOME/.bashrc"; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-  fi
-fi
-
-# 3. Install desktop launcher
-echo "==> Installing desktop application entry..."
-cp "$REPO_ROOT/systemd/insomnia.desktop" "$APP_DIR/insomnia.desktop"
-
-# 4. Install icons into hicolor icon theme
-echo "==> Installing hicolor icons..."
-for size in 16 24 32 48 64 128 256 512; do
-  icon_dir="$ICON_BASE/${size}x${size}/apps"
-  mkdir -p "$icon_dir"
-  if [[ -f "$REPO_ROOT/Resources/icons/insomnia-${size}.png" ]]; then
-    cp "$REPO_ROOT/Resources/icons/insomnia-${size}.png" "$icon_dir/insomnia.png"
-  fi
-done
-
-if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-  gtk-update-icon-cache -f -t "$ICON_BASE" >/dev/null 2>&1 || true
-fi
-
-# 5. Install systemd user service and timer
-echo "==> Configuring systemd user units..."
-cp "$REPO_ROOT/systemd/insomnia-backstop.service" "$SYSTEMD_USER_DIR/"
-cp "$REPO_ROOT/systemd/insomnia-backstop.timer" "$SYSTEMD_USER_DIR/"
-cp "$REPO_ROOT/systemd/insomnia.service" "$SYSTEMD_USER_DIR/"
-
-systemctl --user daemon-reload
-systemctl --user enable --now insomnia-backstop.timer
-
-# 6. Install GNOME Shell Extension
 EXT_UUID="insomnia@vivatvibe.github.com"
-EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
-if [[ -d "$REPO_ROOT/extensions/$EXT_UUID" ]]; then
-  echo "==> Installing GNOME Shell Extension ($EXT_UUID)..."
-  mkdir -p "$EXT_DIR"
-  cp -r "$REPO_ROOT/extensions/$EXT_UUID/"* "$EXT_DIR/"
-  if command -v gnome-extensions >/dev/null 2>&1; then
-    gnome-extensions enable "$EXT_UUID" >/dev/null 2>&1 || true
-    echo "    Extension enabled via gnome-extensions."
-  fi
-  # Also register in gsettings enabled-extensions
-  if command -v gsettings >/dev/null 2>&1; then
-    python3 -c '
+TARGET_DIR="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+
+echo "==> Installing Insomnia Standalone GNOME Shell Extension ($EXT_UUID)..."
+
+cd "$REPO_ROOT"
+
+# 1. Compile schemas
+if command -v glib-compile-schemas >/dev/null 2>&1; then
+  echo "==> Compiling GSettings schemas..."
+  glib-compile-schemas schemas/
+fi
+
+# 2. Install extension files to user extension directory
+echo "==> Copying extension files to $TARGET_DIR..."
+rm -rf "$TARGET_DIR"
+mkdir -p "$TARGET_DIR"
+
+cp -r metadata.json extension.js prefs.js stylesheet.css lib schemas "$TARGET_DIR/"
+
+# 3. Enable extension
+if command -v gnome-extensions >/dev/null 2>&1; then
+  echo "==> Enabling extension via gnome-extensions..."
+  gnome-extensions enable "$EXT_UUID" >/dev/null 2>&1 || true
+fi
+
+# 4. Ensure enabled in gsettings
+if command -v gsettings >/dev/null 2>&1; then
+  python3 -c '
 import subprocess, ast, sys
 try:
     res = subprocess.check_output(["gsettings", "get", "org.gnome.shell", "enabled-extensions"], stderr=subprocess.DEVNULL).decode().strip()
@@ -90,10 +44,10 @@ try:
 except Exception:
     pass
 ' "$EXT_UUID" || true
-  fi
 fi
 
-echo "==> Insomnia installed successfully!"
-echo "    Executable:     $BIN_DIR/insomnia"
-echo "    Backstop Timer: systemctl --user status insomnia-backstop.timer"
-echo "    Run tray:       insomnia run (or systemctl --user start insomnia.service)"
+echo "=========================================================="
+echo " Insomnia GNOME Shell Extension installed successfully!"
+echo " UUID: $EXT_UUID"
+echo " Location: $TARGET_DIR"
+echo "=========================================================="
