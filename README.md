@@ -2,33 +2,98 @@
   <img src="docs/assets/eye-open.svg" alt="Insomnia: an open eye with a round pupil and five lashes above it" width="112">
 </p>
 
-<h1 align="center">Insomnia</h1>
+<h1 align="center">Insomnia (Linux GNOME & macOS)</h1>
 
 <p align="center">
-  <strong>Keep your Mac awake. Give the session an end time.</strong>
+  <strong>Keep your machine awake. Give the session an end time.</strong>
 </p>
 
 <p align="center">
-  A macOS menu bar app for timed awake sessions. Insomnia is an eye icon that
-  lives in your MacBook menu bar. It has no Dock icon and no main window. Set
-  how long your Mac stays awake, choose what happens when the lid closes, and
-  see when something could not be undone.
+  A native Linux GNOME (and macOS) keep-awake tool and lid-close safety engine.
+  On Linux, Insomnia integrates natively with GNOME Desktop via systemd logind D-Bus
+  inhibition and AppIndicator/StatusNotifierItem tray menus without requiring root or sudo.
 </p>
 
 <p align="center">
-  <a href="https://getinsomnia.app"><strong>Website</strong></a> ·
-  <a href="#install"><strong>Install</strong></a> ·
-  <a href="#using-it"><strong>Using it</strong></a> ·
-  <a href="#what-happens-when-the-lid-closes"><strong>Lid close</strong></a> ·
+  <a href="https://github.com/VivatVibe/Insomnia_linux"><strong>Linux Repository</strong></a> ·
+  <a href="#linux-quick-start"><strong>Linux Quick Start</strong></a> ·
+  <a href="#install"><strong>macOS Install</strong></a> ·
   <a href="#how-recovery-works"><strong>Recovery</strong></a> ·
-  <a href="SECURITY.md"><strong>Security</strong></a>
+  <a href="LICENSE"><strong>License</strong></a>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/License-MIT-536D78?style=flat-square"></a>
+  <img alt="Ubuntu Linux / GNOME" src="https://img.shields.io/badge/Linux-Ubuntu%20%7C%20GNOME-E95420?style=flat-square">
   <img alt="macOS 26 or later" src="https://img.shields.io/badge/macOS-26%2B-303336?style=flat-square">
-  <img alt="Experimental source build" src="https://img.shields.io/badge/Status-experimental-536D78?style=flat-square">
+  <img alt="Status" src="https://img.shields.io/badge/Status-verified-brightgreen?style=flat-square">
 </p>
+
+---
+
+## Linux Quick Start (Ubuntu & GNOME)
+
+Insomnia for Linux is adapted for Ubuntu Linux running GNOME Shell (X11 and Wayland).
+
+### Features on Linux
+- **Native systemd logind D-Bus Inhibitor:** Blocks `sleep:idle:handle-lid-switch` with block mode.
+- **Zero Sudo / Root Required:** Runs completely within user session privileges.
+- **GNOME AppIndicator / StatusNotifierItem:** Tray icon with real-time countdown, quick durations, and context menu.
+- **Backstop Daemon:** Runs via `systemd --user` timer (`insomnia-backstop.timer`), releasing locks and unfreezing processes if the app terminates abnormally.
+- **Lid-Close Automation:** Optional display darkening, audio muting, battery profile adjustment (`power-profiles-daemon`), and process suspension.
+- **Tmux Nudge & Browser Unthrottling:** Out-of-the-box support for unattended coding agents and Chromium background throttling prevention.
+
+### Installation
+
+```bash
+git clone https://github.com/VivatVibe/Insomnia_linux.git
+cd Insomnia_linux
+./scripts/install.sh
+```
+
+### Running and CLI Usage
+
+Start the tray application:
+```bash
+insomnia run
+# Or enable as user service:
+systemctl --user enable --now insomnia.service
+```
+
+CLI commands:
+```bash
+# Start a keep-awake session
+insomnia start 4h
+
+# Check status
+insomnia status
+insomnia status --json
+
+# Extend current session
+insomnia extend 30m
+
+# End session early
+insomnia end
+
+# Open GTK3 Settings dialog
+insomnia settings
+```
+
+### Verification and Tests
+
+```bash
+./scripts/verify.sh
+```
+
+### Uninstallation
+
+```bash
+./scripts/uninstall.sh
+# To remove all saved settings and session logs:
+./scripts/uninstall.sh --purge
+```
+
+---
 
 > **Use a stable, well-ventilated surface, not a closed bag.** Insomnia is
 > experimental. Recovery can fail, and a running timer is not a safety

@@ -1,0 +1,9 @@
+[Unit]
+Description=Insomnia Keep-Awake Backstop Daemon
+Documentation=https://github.com/VivatVibe/Insomnia_linux
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/insomnia backstop
+StandardOutput=journal
+StandardError=journal

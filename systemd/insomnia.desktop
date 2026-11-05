@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Insomnia
+GenericName=Keep-Awake & Lid Safety
+Comment=Prevent sleep and lid-close suspension with journaled recovery
+Exec=insomnia run
+Icon=insomnia
+Terminal=false
+Type=Application
+Categories=Utility;System;
+Keywords=sleep;caffeine;awake;lid;inhibit;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
