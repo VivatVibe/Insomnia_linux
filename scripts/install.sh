@@ -31,6 +31,13 @@ exec /usr/bin/python3 -m insomnia "$@"
 EOF
 chmod 0755 "$BIN_DIR/insomnia"
 
+# Ensure ~/.local/bin is in PATH in ~/.bashrc if not already present
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  if [[ -f "$HOME/.bashrc" ]] && ! grep -q 'PATH=.*\.local/bin' "$HOME/.bashrc"; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+  fi
+fi
+
 # 3. Install desktop launcher
 echo "==> Installing desktop application entry..."
 cp "$REPO_ROOT/systemd/insomnia.desktop" "$APP_DIR/insomnia.desktop"

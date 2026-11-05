@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import dbus
 from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib
+from gi.repository import GLib, GLibUnix
 
 from insomnia.backstop import BackstopRunner
 from insomnia.config import Config
@@ -49,8 +49,8 @@ def cmd_run(args: argparse.Namespace, paths: Paths) -> int:
         session_mgr.end_session()
         loop.quit()
 
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, handle_signal)
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, handle_signal)
+    GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, handle_signal)
+    GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, handle_signal)
 
     # Periodic tick every 10 seconds: updates remaining time, enforces battery limits, tracks lid
     was_lid_closed = False
