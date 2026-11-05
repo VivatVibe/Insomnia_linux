@@ -86,9 +86,9 @@ rm -f "$TEMP_LOG"
 sleep 0.3
 
 # Check systemd-inhibit list again
-AFTER_CRASH_OUTPUT=$(systemd-inhibit --list --mode=block | grep -i "Insomnia" || true)
+AFTER_CRASH_OUTPUT=$(systemd-inhibit --list --mode=block | grep "$HOLDER_PID" || true)
 if [[ -n "$AFTER_CRASH_OUTPUT" ]]; then
-  echo "Error: Lock remained active after holder process was killed! Leaked: $AFTER_CRASH_OUTPUT" >&2
+  echo "Error: Lock remained active for PID $HOLDER_PID after process was killed! Leaked: $AFTER_CRASH_OUTPUT" >&2
   exit 1
 fi
 echo "    [PASS] Kernel/systemd automatically released FD upon process termination."

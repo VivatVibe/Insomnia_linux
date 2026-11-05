@@ -364,9 +364,9 @@ class InsomniaIndicator extends PanelMenu.Button {
         });
         this._box.add_child(this._pillsBox);
 
-        this._daysEntry = this._createPillEntry('Days');
-        this._hoursEntry = this._createPillEntry('Hours');
-        this._minsEntry = this._createPillEntry('Mins');
+        this._daysEntry = this._createPillEntry('Days', () => this._hoursEntry, null);
+        this._hoursEntry = this._createPillEntry('Hours', () => this._minsEntry, () => this._daysEntry);
+        this._minsEntry = this._createPillEntry('Mins', null, () => this._hoursEntry);
 
         this._pillsBox.add_child(this._daysEntry);
         this._pillsBox.add_child(this._hoursEntry);
@@ -400,24 +400,55 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._buildMenu();
     }
 
-    _createPillEntry(hint) {
+    _createPillEntry(hint, nextEntryGetter = null, prevEntryGetter = null) {
         const entry = new St.Entry({
             style_class: 'insomnia-pill',
             can_focus: true,
             hint_text: hint,
         });
 
-        entry.clutter_text.connect('key-press-event', (actor, event) => {
-            const symbol = event.get_key_symbol();
-            if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
+        const onActivate = () => {
+            try {
                 this._commitPillDuration();
+            } catch (err) {
+                console.error('Insomnia _commitPillDuration error:', err);
+            }
+        };
+
+        // 1. St.Entry activate signal
+        if (GObject.signal_lookup('activate', St.Entry)) {
+            entry.connect('activate', onActivate);
+        }
+
+        // 2. Clutter.Text activate signal
+        entry.clutter_text.connect('activate', onActivate);
+
+        // 3. Key press handling on clutter_text and entry
+        const handleKeyPress = (actor, event) => {
+            const symbol = event.get_key_symbol();
+            const keyval = typeof event.get_key_unicode === 'function' ? event.get_key_unicode() : 0;
+
+            // Enter key (Return, KP_Enter, ISO_Enter, or \r / \n)
+            if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter || symbol === 65293 || symbol === 65421 || keyval === 13 || keyval === 10) {
+                onActivate();
                 return Clutter.EVENT_STOP;
-            } else if (symbol === Clutter.KEY_Escape) {
+            } else if (symbol === Clutter.KEY_Escape || symbol === 65307) {
                 this._cancelPills();
                 return Clutter.EVENT_STOP;
+            } else if (symbol === Clutter.KEY_Tab || symbol === Clutter.KEY_ISO_Left_Tab) {
+                const next = (symbol === Clutter.KEY_ISO_Left_Tab && prevEntryGetter)
+                    ? prevEntryGetter()
+                    : (nextEntryGetter ? nextEntryGetter() : null);
+                if (next && typeof next.grab_key_focus === 'function') {
+                    next.grab_key_focus();
+                    return Clutter.EVENT_STOP;
+                }
             }
             return Clutter.EVENT_PROPAGATE;
-        });
+        };
+
+        entry.clutter_text.connect('key-press-event', handleKeyPress);
+        entry.connect('key-press-event', handleKeyPress);
 
         return entry;
     }
@@ -465,10 +496,22 @@ class InsomniaIndicator extends PanelMenu.Button {
             this._pillsBox.visible = true;
             this._countLabel.visible = false;
             this._endButton.visible = false;
-            this._daysEntry.text = '';
-            this._hoursEntry.text = '';
-            this._minsEntry.text = '';
-            this._hoursEntry.grab_key_focus();
+
+            const clearEntry = (entry) => {
+                if (!entry) return;
+                if (typeof entry.set_text === 'function') {
+                    entry.set_text('');
+                } else {
+                    entry.text = '';
+                }
+            };
+            clearEntry(this._daysEntry);
+            clearEntry(this._hoursEntry);
+            clearEntry(this._minsEntry);
+
+            if (this._daysEntry && typeof this._daysEntry.grab_key_focus === 'function') {
+                this._daysEntry.grab_key_focus();
+            }
         }
     }
 
@@ -487,11 +530,28 @@ class InsomniaIndicator extends PanelMenu.Button {
     }
 
     _commitPillDuration() {
-        const d = this._daysEntry.text.trim();
-        const h = this._hoursEntry.text.trim();
-        const m = this._minsEntry.text.trim();
+        const getVal = (entry) => {
+            if (!entry) return '';
+            let val = '';
+            if (typeof entry.get_text === 'function') {
+                val = entry.get_text();
+            } else if (entry.clutter_text && typeof entry.clutter_text.get_text === 'function') {
+                val = entry.clutter_text.get_text();
+            } else if (entry.text) {
+                val = entry.text;
+            }
+            return (val || '').toString().trim();
+        };
+
+        const d = getVal(this._daysEntry);
+        const h = getVal(this._hoursEntry);
+        const m = getVal(this._minsEntry);
+
+        console.log(`Insomnia _commitPillDuration: days='${d}', hours='${h}', mins='${m}'`);
 
         const secs = parseDurationSeconds(d, h, m);
+        console.log(`Insomnia _commitPillDuration: starting session with ${secs} seconds`);
+
         if (this._inhibitor.isActive) {
             this._extendSession(secs);
         } else {
@@ -503,14 +563,19 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._remainingSeconds = durationSeconds;
         this._pillsBox.visible = false;
 
-        const preventLid = this._settings.get_boolean('prevent-lid-sleep');
+        const preventLid = this._settings ? this._settings.get_boolean('prevent-lid-sleep') : true;
         this._inhibitor.acquire(preventLid, () => {
             this._updateMenuStatus();
         });
 
         this._mode = 'RUNNING';
         this._eyeMark.setRunning(true);
-        this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
+        const remFormatted = formatTimeRemaining(this._remainingSeconds);
+        if (typeof this._countLabel.set_text === 'function') {
+            this._countLabel.set_text(remFormatted);
+        } else {
+            this._countLabel.text = remFormatted;
+        }
         this._countLabel.visible = true;
         this._endButton.visible = true;
 
@@ -521,7 +586,12 @@ class InsomniaIndicator extends PanelMenu.Button {
     _extendSession(additionalSeconds) {
         this._remainingSeconds += additionalSeconds;
         this._pillsBox.visible = false;
-        this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
+        const remFormatted = formatTimeRemaining(this._remainingSeconds);
+        if (typeof this._countLabel.set_text === 'function') {
+            this._countLabel.set_text(remFormatted);
+        } else {
+            this._countLabel.text = remFormatted;
+        }
         this._updateMenuStatus();
     }
 
@@ -544,7 +614,12 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             if (this._remainingSeconds > 0) {
                 this._remainingSeconds -= 1;
-                this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
+                const remFormatted = formatTimeRemaining(this._remainingSeconds);
+                if (typeof this._countLabel.set_text === 'function') {
+                    this._countLabel.set_text(remFormatted);
+                } else {
+                    this._countLabel.text = remFormatted;
+                }
                 return GLib.SOURCE_CONTINUE;
             }
             this._endSession();
