@@ -29,6 +29,17 @@ def cmd_run(args: argparse.Namespace, paths: Paths) -> int:
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SessionBus()
 
+    # Ensure single instance
+    try:
+        _app_bus_name = dbus.service.BusName(
+            "org.vivatvibe.Insomnia",
+            bus,
+            do_not_queue=True,
+        )
+    except dbus.exceptions.NameExistsException:
+        print("Insomnia is already running in the top bar.")
+        return 0
+
     config_data = Store.read_json(paths.config_file) or {}
     config = Config.from_dict(config_data)
 
@@ -37,6 +48,8 @@ def cmd_run(args: argparse.Namespace, paths: Paths) -> int:
 
     # Locate icons directory
     icons_dir = Path(__file__).parent.parent / "Resources" / "icons"
+    if not icons_dir.exists():
+        icons_dir = Path("/usr/lib/insomnia/Resources/icons")
     if not icons_dir.exists():
         icons_dir = paths.data_dir / "icons"
 

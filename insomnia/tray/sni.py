@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import dbus
 import dbus.service
-from gi.repository import GLib
+from PIL import Image
 
 from insomnia.config import Config
 from insomnia.paths import Paths
@@ -19,8 +18,26 @@ from insomnia.system.tmux_nudge import TmuxNudge
 from insomnia.ui.settings_dialog import SettingsDialog
 
 
+def make_pixmap_struct(image_path: Path, size: int = 32) -> Optional[dbus.Struct]:
+    if not image_path.exists():
+        return None
+    try:
+        img = Image.open(image_path).convert("RGBA").resize((size, size))
+        raw = bytearray()
+        # SNI expects network byte order ARGB32 (Alpha, Red, Green, Blue)
+        for pixel in list(img.getdata()):
+            r, g, b, a = pixel
+            raw.extend([a, r, g, b])
+        return dbus.Struct(
+            (dbus.Int32(size), dbus.Int32(size), dbus.ByteArray(bytes(raw))),
+            signature="iiay",
+        )
+    except Exception:
+        return None
+
+
 class StatusNotifierTray(dbus.service.Object):
-    """Full implementation of org.kde.StatusNotifierItem and com.canonical.dbusmenu."""
+    """Robust StatusNotifierItem and com.canonical.dbusmenu implementation for GNOME Shell."""
 
     def __init__(
         self,
@@ -39,19 +56,18 @@ class StatusNotifierTray(dbus.service.Object):
         self.service_name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
         self.bus_name = dbus.service.BusName(self.service_name, self.bus)
 
-        # Register SNI and Menu paths
         super().__init__(self.bus, "/StatusNotifierItem")
 
         self.menu_revision = 1
         self._menu_actions: Dict[int, Callable[[], None]] = {}
+        self._menu_items: Dict[int, Dict[str, Any]] = {}
 
-        # Set up menu service object
+        # Pre-generate icon pixmaps
+        self._active_pixmap = make_pixmap_struct(self.icons_dir / "insomnia-32.png", 32)
+        self._idle_pixmap = make_pixmap_struct(self.icons_dir / "insomnia-idle-32.png", 32)
+
         self._setup_dbusmenu()
-
-        # Connect session manager callbacks
         self.session_mgr.add_on_change_callback(self.on_session_changed)
-
-        # Register with watcher
         self._register_with_watcher()
 
     def _register_with_watcher(self) -> None:
@@ -59,11 +75,12 @@ class StatusNotifierTray(dbus.service.Object):
             watcher = self.bus.get_object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
             watcher.RegisterStatusNotifierItem(self.service_name, dbus_interface="org.kde.StatusNotifierWatcher")
         except Exception as err:
-            sys.stderr.write(f"Notice: Could not register with StatusNotifierWatcher: {err}\n")
+            sys.stderr.write(f"Notice: StatusNotifierWatcher registration: {err}\n")
 
     def on_session_changed(self, session: Optional[Session]) -> None:
         self.menu_revision += 1
-        self.LayoutUpdated(dbus.UInt32(self.menu_revision), 0)
+        self._refresh_menu_items()
+        self.LayoutUpdated(dbus.UInt32(self.menu_revision), dbus.Int32(0))
         self.NewIcon()
         self.NewTitle()
         self.NewToolTip()
@@ -75,11 +92,7 @@ class StatusNotifierTray(dbus.service.Object):
 
     def GetIconName(self) -> str:
         session = self.session_mgr.get_active_session()
-        if session is not None:
-            icon_path = self.icons_dir / "insomnia-32.png"
-        else:
-            icon_path = self.icons_dir / "insomnia-idle-32.png"
-        return str(icon_path) if icon_path.exists() else "weather-clear"
+        return "insomnia" if session is not None else "insomnia-idle"
 
     def GetTitle(self) -> str:
         session = self.session_mgr.get_active_session()
@@ -87,7 +100,7 @@ class StatusNotifierTray(dbus.service.Object):
             return f"Insomnia ({format_remaining_time(session.remaining())})"
         return "Insomnia"
 
-    # --- org.kde.StatusNotifierItem DBus Interface ---
+    # --- org.kde.StatusNotifierItem Interface ---
 
     @dbus.service.method("org.kde.StatusNotifierItem", in_signature="ii", out_signature="")
     def ContextMenu(self, x: int, y: int) -> None:
@@ -95,22 +108,22 @@ class StatusNotifierTray(dbus.service.Object):
 
     @dbus.service.method("org.kde.StatusNotifierItem", in_signature="ii", out_signature="")
     def Activate(self, x: int, y: int) -> None:
-        # Clicking icon toggles quick 4h session if idle, or extends by 30m if active
+        # Left click opens settings
+        self._open_settings()
+
+    @dbus.service.method("org.kde.StatusNotifierItem", in_signature="ii", out_signature="")
+    def SecondaryActivate(self, x: int, y: int) -> None:
+        # Middle click toggles session
         session = self.session_mgr.get_active_session()
         if session is None:
             self.session_mgr.start_session(self.config.default_preset)
         else:
-            self.session_mgr.extend_session(1800.0)
-
-    @dbus.service.method("org.kde.StatusNotifierItem", in_signature="ii", out_signature="")
-    def SecondaryActivate(self, x: int, y: int) -> None:
-        self.session_mgr.end_session()
+            self.session_mgr.end_session()
 
     @dbus.service.method("org.kde.StatusNotifierItem", in_signature="is", out_signature="")
     def Scroll(self, delta: int, orientation: str) -> None:
         pass
 
-    # Signals
     @dbus.service.signal("org.kde.StatusNotifierItem")
     def NewTitle(self) -> None:
         pass
@@ -135,7 +148,6 @@ class StatusNotifierTray(dbus.service.Object):
     def NewStatus(self, status: str) -> None:
         pass
 
-    # Properties
     @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="ss", out_signature="v")
     def Get(self, interface_name: str, property_name: str) -> Any:
         props = self.GetAll(interface_name)
@@ -148,6 +160,11 @@ class StatusNotifierTray(dbus.service.Object):
         icon_name = self.GetIconName()
         title = self.GetTitle()
 
+        pixmaps = []
+        target_pix = self._active_pixmap if session else self._idle_pixmap
+        if target_pix:
+            pixmaps.append(target_pix)
+
         return {
             "Category": dbus.String("ApplicationStatus"),
             "Id": dbus.String("insomnia"),
@@ -155,6 +172,7 @@ class StatusNotifierTray(dbus.service.Object):
             "Status": dbus.String("Active" if session else "Passive"),
             "WindowId": dbus.Int32(0),
             "IconName": dbus.String(icon_name),
+            "IconPixmap": dbus.Array(pixmaps, signature="(iiay)"),
             "IconThemePath": dbus.String(str(self.icons_dir)),
             "OverlayIconName": dbus.String(""),
             "AttentionIconName": dbus.String(""),
@@ -164,7 +182,7 @@ class StatusNotifierTray(dbus.service.Object):
             "ToolTip": dbus.Struct(
                 (
                     dbus.String(icon_name),
-                    dbus.Array([], signature="(iiay)"),
+                    dbus.Array(pixmaps, signature="(iiay)"),
                     dbus.String(f"Insomnia Keep-Awake: {rem_str}"),
                     dbus.String("Prevents sleep and lid-close suspension via systemd logind"),
                 ),
@@ -175,46 +193,52 @@ class StatusNotifierTray(dbus.service.Object):
     # --- com.canonical.dbusmenu Interface ---
 
     def _setup_dbusmenu(self) -> None:
-        class DBusMenuProxy(dbus.service.Object):
-            def __init__(proxy_self, parent: StatusNotifierTray):
-                super().__init__(parent.bus, "/MenuBar")
-                proxy_self.parent = parent
+        tray = self
+
+        class DBusMenuService(dbus.service.Object):
+            def __init__(self, bus, path):
+                super().__init__(bus, path)
 
             @dbus.service.method("com.canonical.dbusmenu", in_signature="iias", out_signature="u(ia{sv}av)")
-            def GetLayout(proxy_self, parent_id: int, recursion_depth: int, property_names: List[str]):
-                return proxy_self.parent._get_menu_layout(parent_id)
+            def GetLayout(self, parent_id: int, recursion_depth: int, property_names: List[str]):
+                return tray._get_menu_layout(parent_id)
 
             @dbus.service.method("com.canonical.dbusmenu", in_signature="aias", out_signature="a(ia{sv})")
-            def GetGroupProperties(proxy_self, ids: List[int], property_names: List[str]):
-                return dbus.Array([], signature="(ia{sv})")
+            def GetGroupProperties(self, ids: List[int], property_names: List[str]):
+                return tray._get_group_properties(ids, property_names)
+
+            @dbus.service.method("com.canonical.dbusmenu", in_signature="is", out_signature="v")
+            def GetProperty(self, item_id: int, name: str) -> Any:
+                return tray._get_single_property(item_id, name)
 
             @dbus.service.method("com.canonical.dbusmenu", in_signature="isvu", out_signature="")
-            def Event(proxy_self, item_id: int, event_id: str, data: Any, timestamp: int):
+            def Event(self, item_id: int, event_id: str, data: Any, timestamp: int):
                 if event_id == "clicked":
-                    proxy_self.parent._handle_menu_click(item_id)
+                    tray._handle_menu_click(item_id)
 
             @dbus.service.method("com.canonical.dbusmenu", in_signature="i", out_signature="b")
-            def AboutToShow(proxy_self, item_id: int) -> bool:
+            def AboutToShow(self, item_id: int) -> bool:
                 return dbus.Boolean(True)
 
             @dbus.service.signal("com.canonical.dbusmenu", signature="ui")
-            def LayoutUpdated(proxy_self, revision: int, parent_id: int):
+            def LayoutUpdated(self, revision: int, parent_id: int):
                 pass
 
-        self._menu_proxy = DBusMenuProxy(self)
-        self.LayoutUpdated = self._menu_proxy.LayoutUpdated
+        self._menu_service = DBusMenuService(self.bus, "/MenuBar")
+        self.LayoutUpdated = self._menu_service.LayoutUpdated
+        self._refresh_menu_items()
 
-    def _get_menu_layout(self, parent_id: int) -> Any:
+    def _refresh_menu_items(self) -> None:
         self._menu_actions.clear()
+        self._menu_items.clear()
         session = self.session_mgr.get_active_session()
         is_active = session is not None
 
-        items: List[Any] = []
         item_id = 1
 
-        def add_item(label: str, action: Optional[Callable[[], None]] = None, enabled: bool = True, is_sep: bool = False):
+        def register(label: str, action: Optional[Callable[[], None]] = None, enabled: bool = True, is_sep: bool = False) -> int:
             nonlocal item_id
-            current_id = item_id
+            cid = item_id
             item_id += 1
 
             props: Dict[str, Any] = {
@@ -225,59 +249,61 @@ class StatusNotifierTray(dbus.service.Object):
             if is_sep:
                 props["type"] = dbus.String("separator")
 
-            if action is not None:
-                self._menu_actions[current_id] = action
+            self._menu_items[cid] = props
+            if action:
+                self._menu_actions[cid] = action
+            return cid
 
-            struct_item = dbus.Struct(
-                (current_id, dbus.Dictionary(props, signature="sv"), dbus.Array([], signature="v")),
-                signature="ia{sv}av",
-            )
-            items.append(struct_item)
-
-        # 1. Status header
+        # Status
         if is_active:
             rem = format_remaining_time(session.remaining())
-            add_item(f"● Active ({rem} remaining)", enabled=False)
+            register(f"● Active ({rem} remaining)", enabled=False)
         else:
-            add_item("○ Inactive (Sleep allowed)", enabled=False)
+            register("○ Inactive (Sleep allowed)", enabled=False)
 
-        add_item("", is_sep=True)
+        register("", is_sep=True)
 
-        # 2. Quick Durations
-        add_item("Keep Awake: 30 Minutes", lambda: self.session_mgr.start_session(1800.0))
-        add_item("Keep Awake: 1 Hour", lambda: self.session_mgr.start_session(3600.0))
-        add_item("Keep Awake: 2 Hours", lambda: self.session_mgr.start_session(7200.0))
-        add_item("Keep Awake: 4 Hours (Default)", lambda: self.session_mgr.start_session(14400.0))
-        add_item("Keep Awake: 8 Hours", lambda: self.session_mgr.start_session(28800.0))
+        # Quick durations
+        register("Keep Awake: 30 Minutes", lambda: self.session_mgr.start_session(1800.0))
+        register("Keep Awake: 1 Hour", lambda: self.session_mgr.start_session(3600.0))
+        register("Keep Awake: 2 Hours", lambda: self.session_mgr.start_session(7200.0))
+        register("Keep Awake: 4 Hours (Default)", lambda: self.session_mgr.start_session(14400.0))
+        register("Keep Awake: 8 Hours", lambda: self.session_mgr.start_session(28800.0))
 
-        add_item("", is_sep=True)
+        register("", is_sep=True)
 
-        # 3. Add Time
-        add_item("+15 Minutes", lambda: self.session_mgr.extend_session(900.0), enabled=is_active)
-        add_item("+30 Minutes", lambda: self.session_mgr.extend_session(1800.0), enabled=is_active)
-        add_item("+1 Hour", lambda: self.session_mgr.extend_session(3600.0), enabled=is_active)
+        # Extend & End
+        register("+15 Minutes", lambda: self.session_mgr.extend_session(900.0), enabled=is_active)
+        register("+30 Minutes", lambda: self.session_mgr.extend_session(1800.0), enabled=is_active)
+        register("+1 Hour", lambda: self.session_mgr.extend_session(3600.0), enabled=is_active)
+        register("End Session Early", lambda: self.session_mgr.end_session(), enabled=is_active)
 
-        # 4. End Early
-        add_item("End Session Early", lambda: self.session_mgr.end_session(), enabled=is_active)
+        register("", is_sep=True)
 
-        add_item("", is_sep=True)
-
-        # 5. Battery and power status
+        # Battery / helpers
         pct, stat = BatteryMonitor.get_battery_info()
         prof = BatteryMonitor.get_power_profile() or "default"
         if pct is not None:
-            add_item(f"Battery: {pct}% ({stat}) - Profile: {prof}", enabled=False)
+            register(f"Battery: {pct}% ({stat}) - Profile: {prof}", enabled=False)
 
-        # 6. Helpers: Tmux nudge & Browser unthrottling
-        add_item("Unthrottle Chromium Browsers", self._unthrottle_browsers)
+        register("Unthrottle Chromium Browsers", self._unthrottle_browsers)
         if self.config.tmux_targets:
-            add_item("Nudge Tmux Panes Now", self._nudge_tmux)
+            register("Nudge Tmux Panes Now", self._nudge_tmux)
 
-        add_item("", is_sep=True)
+        register("", is_sep=True)
+        register("Settings...", self._open_settings)
+        register("Quit Insomnia", self._quit)
 
-        # 7. Settings and Quit
-        add_item("Settings...", self._open_settings)
-        add_item("Quit Insomnia", self._quit)
+    def _get_menu_layout(self, parent_id: int) -> Any:
+        self._refresh_menu_items()
+
+        items = []
+        for cid, props in sorted(self._menu_items.items()):
+            struct_item = dbus.Struct(
+                (cid, dbus.Dictionary(props, signature="sv"), dbus.Array([], signature="v")),
+                signature="ia{sv}av",
+            )
+            items.append(struct_item)
 
         root_props = dbus.Dictionary({"children-display": dbus.String("submenu")}, signature="sv")
         layout = dbus.Struct(
@@ -285,6 +311,24 @@ class StatusNotifierTray(dbus.service.Object):
             signature="ia{sv}av",
         )
         return dbus.UInt32(self.menu_revision), layout
+
+    def _get_group_properties(self, ids: List[int], property_names: List[str]) -> Any:
+        res = []
+        for cid in ids:
+            if cid == 0:
+                props = dbus.Dictionary({"children-display": dbus.String("submenu")}, signature="sv")
+                res.append(dbus.Struct((dbus.Int32(0), props), signature="ia{sv}"))
+            elif cid in self._menu_items:
+                props = dbus.Dictionary(self._menu_items[cid], signature="sv")
+                res.append(dbus.Struct((dbus.Int32(cid), props), signature="ia{sv}"))
+        return dbus.Array(res, signature="(ia{sv})")
+
+    def _get_single_property(self, item_id: int, name: str) -> Any:
+        if item_id == 0 and name == "children-display":
+            return dbus.String("submenu")
+        if item_id in self._menu_items and name in self._menu_items[item_id]:
+            return self._menu_items[item_id][name]
+        return dbus.String("")
 
     def _handle_menu_click(self, item_id: int) -> None:
         action = self._menu_actions.get(item_id)
@@ -305,7 +349,7 @@ class StatusNotifierTray(dbus.service.Object):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.paths, self.config)
         res = dialog.run()
-        if res == 1:  # GTK OK
+        if res == 1:
             dialog.apply_settings()
         dialog.destroy()
 
