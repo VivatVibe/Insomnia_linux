@@ -393,7 +393,7 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._endButton = new HoldToEndButton(() => {
             this._endSession();
         });
-        this._endButton.set_visible(false);
+        this._endButton.visible = false;
         this._box.add_child(this._endButton);
 
         // 5. Popup Menu
@@ -404,8 +404,8 @@ class InsomniaIndicator extends PanelMenu.Button {
         const entry = new St.Entry({
             style_class: 'insomnia-pill',
             can_focus: true,
+            hint_text: hint,
         });
-        entry.set_hint_text(hint);
 
         entry.clutter_text.connect('key-press-event', (actor, event) => {
             const symbol = event.get_key_symbol();
@@ -462,34 +462,34 @@ class InsomniaIndicator extends PanelMenu.Button {
             this._cancelPills();
         } else {
             this._mode = 'ENTERING';
-            this._pillsBox.set_visible(true);
-            this._countLabel.set_visible(false);
-            this._endButton.set_visible(false);
-            this._daysEntry.set_text('');
-            this._hoursEntry.set_text('');
-            this._minsEntry.set_text('');
+            this._pillsBox.visible = true;
+            this._countLabel.visible = false;
+            this._endButton.visible = false;
+            this._daysEntry.text = '';
+            this._hoursEntry.text = '';
+            this._minsEntry.text = '';
             this._hoursEntry.grab_key_focus();
         }
     }
 
     _cancelPills() {
-        this._pillsBox.set_visible(false);
+        this._pillsBox.visible = false;
         if (this._inhibitor.isActive) {
             this._mode = 'RUNNING';
-            this._countLabel.set_visible(true);
-            this._endButton.set_visible(true);
+            this._countLabel.visible = true;
+            this._endButton.visible = true;
         } else {
             this._mode = 'IDLE';
-            this._countLabel.set_visible(false);
-            this._endButton.set_visible(false);
+            this._countLabel.visible = false;
+            this._endButton.visible = false;
             this._eyeMark.setRunning(false);
         }
     }
 
     _commitPillDuration() {
-        const d = this._daysEntry.get_text().trim();
-        const h = this._hoursEntry.get_text().trim();
-        const m = this._minsEntry.get_text().trim();
+        const d = this._daysEntry.text.trim();
+        const h = this._hoursEntry.text.trim();
+        const m = this._minsEntry.text.trim();
 
         const secs = parseDurationSeconds(d, h, m);
         if (this._inhibitor.isActive) {
@@ -501,7 +501,7 @@ class InsomniaIndicator extends PanelMenu.Button {
 
     _startSession(durationSeconds) {
         this._remainingSeconds = durationSeconds;
-        this._pillsBox.set_visible(false);
+        this._pillsBox.visible = false;
 
         const preventLid = this._settings.get_boolean('prevent-lid-sleep');
         this._inhibitor.acquire(preventLid, () => {
@@ -510,9 +510,9 @@ class InsomniaIndicator extends PanelMenu.Button {
 
         this._mode = 'RUNNING';
         this._eyeMark.setRunning(true);
-        this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
-        this._countLabel.set_visible(true);
-        this._endButton.set_visible(true);
+        this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
+        this._countLabel.visible = true;
+        this._endButton.visible = true;
 
         this._startTimer();
         this._updateMenuStatus();
@@ -520,8 +520,8 @@ class InsomniaIndicator extends PanelMenu.Button {
 
     _extendSession(additionalSeconds) {
         this._remainingSeconds += additionalSeconds;
-        this._pillsBox.set_visible(false);
-        this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
+        this._pillsBox.visible = false;
+        this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
         this._updateMenuStatus();
     }
 
@@ -532,9 +532,9 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._mode = 'IDLE';
 
         this._eyeMark.setRunning(false);
-        this._pillsBox.set_visible(false);
-        this._countLabel.set_visible(false);
-        this._endButton.set_visible(false);
+        this._pillsBox.visible = false;
+        this._countLabel.visible = false;
+        this._endButton.visible = false;
 
         this._updateMenuStatus();
     }
@@ -544,7 +544,7 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._timerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             if (this._remainingSeconds > 0) {
                 this._remainingSeconds -= 1;
-                this._countLabel.set_text(formatTimeRemaining(this._remainingSeconds));
+                this._countLabel.text = formatTimeRemaining(this._remainingSeconds);
                 return GLib.SOURCE_CONTINUE;
             }
             this._endSession();
