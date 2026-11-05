@@ -103,7 +103,7 @@ case "$1" in
             gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
         fi
         if command -v systemctl >/dev/null 2>&1; then
-            systemctl --global daemon-reload || true
+            systemctl daemon-reload || true
         fi
         ;;
 esac
@@ -126,7 +126,7 @@ case "$1" in
             gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
         fi
         if command -v systemctl >/dev/null 2>&1; then
-            systemctl --global daemon-reload || true
+            systemctl daemon-reload || true
         fi
         ;;
 esac
