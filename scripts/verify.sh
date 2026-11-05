@@ -26,7 +26,7 @@ echo "==> [3/5] Running Runtime Safety & Security Gauntlet..."
 
 # 4. Pack Extension Validation
 echo "==> [4/5] Testing extension bundle packing..."
-gnome-extensions pack . --force
+gnome-extensions pack . --extra-source=lib --force
 rm -f insomnia@vivatvibe.github.com.shell-extension.zip
 echo "    Bundle packaging verified."
 

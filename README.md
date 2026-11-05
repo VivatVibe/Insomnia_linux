@@ -68,7 +68,7 @@ After installation:
 ### Packaging for extensions.gnome.org (EGO)
 To create a clean distribution bundle for uploading to [extensions.gnome.org](https://extensions.gnome.org):
 ```bash
-gnome-extensions pack . --force
+gnome-extensions pack . --extra-source=lib --force
 # Generates: insomnia@vivatvibe.github.com.shell-extension.zip
 ```
 
