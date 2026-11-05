@@ -17,16 +17,21 @@ glib-compile-schemas schemas/
 echo "    Schema compiled cleanly."
 
 # 2. Run GJS Unit Tests
-echo "==> [2/4] Running standalone JavaScript unit tests..."
+echo "==> [2/5] Running standalone JavaScript unit tests..."
 gjs -m tests/test_standalone.js
 
-# 3. Pack Extension Validation
-echo "==> [3/4] Testing extension bundle packing..."
-gnome-extensions pack . --force
-echo "    Bundle generated: insomnia@vivatvibe.github.com.shell-extension.zip"
+# 3. Run Safety & Security Gauntlet
+echo "==> [3/5] Running Runtime Safety & Security Gauntlet..."
+"$REPO_ROOT/scripts/check-safety.sh"
 
-# 4. Install & Verification
-echo "==> [4/4] Testing extension installer..."
+# 4. Pack Extension Validation
+echo "==> [4/5] Testing extension bundle packing..."
+gnome-extensions pack . --force
+rm -f insomnia@vivatvibe.github.com.shell-extension.zip
+echo "    Bundle packaging verified."
+
+# 5. Install & Verification
+echo "==> [5/5] Testing extension installer..."
 "$REPO_ROOT/scripts/install.sh"
 
 echo "=========================================================="

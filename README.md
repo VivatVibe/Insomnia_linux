@@ -76,17 +76,22 @@ gnome-extensions pack . --force
 
 ## Verification & Testing
 
-Insomnia includes an automated GJS verification suite:
+Insomnia includes an automated verification and safety testing suite:
 
 ```bash
+# Complete suite
 ./scripts/verify.sh
+
+# Dedicated safety and crash gauntlet
+./scripts/check-safety.sh
 ```
 
-The script verifies:
+The scripts verify:
 1. GSettings schema compilation (`glib-compile-schemas`).
 2. Duration string math and time formatters.
 3. Live acquisition and release of `systemd logind` inhibit locks (FD check).
-4. Extension packaging and installation.
+4. SIGKILL crash safety proving the Linux kernel automatically releases logind locks with zero orphans.
+5. Extension packaging and installation.
 
 ---
 
