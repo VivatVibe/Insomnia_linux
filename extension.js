@@ -38,7 +38,7 @@ class PowerMonitor {
                 this._updateProperties();
             });
         } catch (e) {
-            logError(e, 'Insomnia: Failed to initialize UPower proxy');
+            console.error('Insomnia: Failed to initialize UPower proxy', e);
         }
     }
 
