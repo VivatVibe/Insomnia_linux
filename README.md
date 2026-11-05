@@ -45,6 +45,16 @@ Insomnia for Linux is adapted for Ubuntu Linux running GNOME Shell (X11 and Wayl
 
 ### Installation
 
+#### Option 1: Debian Package (.deb)
+```bash
+# Build the .deb package
+./scripts/build-deb.sh
+
+# Install via apt
+sudo apt install ./dist/insomnia_1.0.0_all.deb
+```
+
+#### Option 2: Standalone User Install (No Sudo)
 ```bash
 git clone https://github.com/VivatVibe/Insomnia_linux.git
 cd Insomnia_linux
