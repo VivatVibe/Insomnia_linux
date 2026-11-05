@@ -1,5 +1,6 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
@@ -50,18 +51,32 @@ export default class InsomniaPreferences extends ExtensionPreferences {
         settings.bind('low-power-floor', lowPowerRow, 'value', Gio.SettingsBindFlags.DEFAULT);
         powerGroup.add(lowPowerRow);
 
-        // End session floor spin row
+        // Battery Floor Cutoff Switch
+        const cutoffSwitchRow = new Adw.SwitchRow({
+            title: _('Battery Floor Cutoff'),
+            subtitle: _('Automatically end keep-awake session and permit sleep when battery is low.'),
+        });
+        settings.bind('battery-cutoff-enabled', cutoffSwitchRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        powerGroup.add(cutoffSwitchRow);
+
+        // Battery Floor Cutoff SpinRow
         const endFloorRow = new Adw.SpinRow({
-            title: _('Emergency End Battery Threshold'),
-            subtitle: _('Stop session and permit sleep if battery falls below this percentage (0 to disable).'),
+            title: _('Cutoff Battery Threshold'),
+            subtitle: _('Stop session and permit sleep if battery falls below this percentage.'),
             adjustment: new Gtk.Adjustment({
-                lower: 0,
+                lower: 5,
                 upper: 50,
                 step_increment: 5,
                 page_increment: 10,
             }),
         });
         settings.bind('end-floor', endFloorRow, 'value', Gio.SettingsBindFlags.DEFAULT);
+        cutoffSwitchRow.bind_property(
+            'active',
+            endFloorRow,
+            'sensitive',
+            GObject.BindingFlags.SYNC_CREATE
+        );
         powerGroup.add(endFloorRow);
     }
 }

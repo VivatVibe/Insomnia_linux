@@ -8,7 +8,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import { parseDurationSeconds, formatTimeRemaining, LogindInhibitor } from './lib/utils.js';
+import { parseDurationSeconds, formatTimeRemaining, LogindInhibitor, shouldCutoffSession } from './lib/utils.js';
 
 // UPower & PowerProfiles Monitor
 class PowerMonitor {
@@ -17,6 +17,10 @@ class PowerMonitor {
         this._onEmergencyEnd = onEmergencyEnd;
         this._bus = Gio.DBus.system;
         this._upower = null;
+        this._displayDevice = null;
+        this._upowerSignalId = null;
+        this._displaySignalId = null;
+        this._settingsSignalId = null;
         this._batteryPercent = 100;
         this._onBattery = false;
         this._lidIsClosed = false;
@@ -32,13 +36,34 @@ class PowerMonitor {
                 g_interface_name: 'org.freedesktop.UPower',
             });
             this._upower.init(null);
+
+            this._displayDevice = new Gio.DBusProxy({
+                g_connection: this._bus,
+                g_name: 'org.freedesktop.UPower',
+                g_object_path: '/org/freedesktop/UPower/devices/DisplayDevice',
+                g_interface_name: 'org.freedesktop.UPower.Device',
+            });
+            this._displayDevice.init(null);
+
             this._updateProperties();
 
-            this._upower.connect('g-properties-changed', () => {
+            this._upowerSignalId = this._upower.connect('g-properties-changed', () => {
                 this._updateProperties();
             });
+
+            this._displaySignalId = this._displayDevice.connect('g-properties-changed', () => {
+                this._updateProperties();
+            });
+
+            if (this._settings) {
+                this._settingsSignalId = this._settings.connect('changed', (settings, key) => {
+                    if (key === 'battery-cutoff-enabled' || key === 'end-floor' || key === 'auto-power-saver' || key === 'low-power-floor') {
+                        this._enforceBatteryRules();
+                    }
+                });
+            }
         } catch (e) {
-            console.error('Insomnia: Failed to initialize UPower proxy', e);
+            console.error('Insomnia: Failed to initialize UPower proxies', e);
         }
     }
 
@@ -48,20 +73,15 @@ class PowerMonitor {
         this._onBattery = this._upower.get_cached_property('OnBattery')?.unpack() ?? false;
 
         // Check DisplayDevice for battery percentage
-        try {
-            const devProxy = new Gio.DBusProxy({
-                g_connection: this._bus,
-                g_name: 'org.freedesktop.UPower',
-                g_object_path: '/org/freedesktop/UPower/devices/DisplayDevice',
-                g_interface_name: 'org.freedesktop.UPower.Device',
-            });
-            devProxy.init(null);
-            const pct = devProxy.get_cached_property('Percentage')?.unpack();
-            if (pct !== undefined) {
-                this._batteryPercent = Math.round(pct);
+        if (this._displayDevice) {
+            try {
+                const pct = this._displayDevice.get_cached_property('Percentage')?.unpack();
+                if (pct !== undefined) {
+                    this._batteryPercent = Math.round(pct);
+                }
+            } catch (e) {
+                // Display device properties not accessible
             }
-        } catch (e) {
-            // Display device not found (e.g. desktop)
         }
 
         this._enforceBatteryRules();
@@ -70,18 +90,39 @@ class PowerMonitor {
     _enforceBatteryRules() {
         if (!this._onBattery) return;
 
-        const endFloor = this._settings.get_int('end-floor');
-        if (endFloor > 0 && this._batteryPercent <= endFloor) {
+        const cutoffEnabled = this._settings ? this._settings.get_boolean('battery-cutoff-enabled') : false;
+        const endFloor = this._settings ? this._settings.get_int('end-floor') : 0;
+        if (shouldCutoffSession({
+            onBattery: this._onBattery,
+            batteryPercent: this._batteryPercent,
+            cutoffEnabled,
+            endFloor,
+        })) {
             if (this._onEmergencyEnd) {
-                this._onEmergencyEnd();
+                this._onEmergencyEnd(this._batteryPercent, endFloor);
             }
             return;
         }
 
-        const autoSaver = this._settings.get_boolean('auto-power-saver');
-        const lowPowerFloor = this._settings.get_int('low-power-floor');
+        const autoSaver = this._settings ? this._settings.get_boolean('auto-power-saver') : false;
+        const lowPowerFloor = this._settings ? this._settings.get_int('low-power-floor') : 40;
         if (autoSaver && this._batteryPercent <= lowPowerFloor) {
             this.setPowerProfile('power-saver');
+        }
+    }
+
+    destroy() {
+        if (this._settingsSignalId && this._settings) {
+            this._settings.disconnect(this._settingsSignalId);
+            this._settingsSignalId = null;
+        }
+        if (this._upowerSignalId && this._upower) {
+            this._upower.disconnect(this._upowerSignalId);
+            this._upowerSignalId = null;
+        }
+        if (this._displaySignalId && this._displayDevice) {
+            this._displayDevice.disconnect(this._displaySignalId);
+            this._displaySignalId = null;
         }
     }
 
@@ -335,8 +376,14 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._timerId = null;
 
         this._inhibitor = new LogindInhibitor();
-        this._power = new PowerMonitor(this._settings, () => {
-            this._endSession();
+        this._power = new PowerMonitor(this._settings, (batteryPct, threshold) => {
+            if (this._mode === 'RUNNING') {
+                this._endSession();
+                Main.notify(
+                    'Insomnia Keep-Awake',
+                    `Battery fell to ${batteryPct}% (cutoff floor: ${threshold}%). Session ended.`
+                );
+            }
         });
 
         // Container box
@@ -560,6 +607,24 @@ class InsomniaIndicator extends PanelMenu.Button {
     }
 
     _startSession(durationSeconds) {
+        if (this._power && this._power.onBattery) {
+            const cutoffEnabled = this._settings ? this._settings.get_boolean('battery-cutoff-enabled') : false;
+            const endFloor = this._settings ? this._settings.get_int('end-floor') : 0;
+            if (shouldCutoffSession({
+                onBattery: this._power.onBattery,
+                batteryPercent: this._power.batteryPercent,
+                cutoffEnabled,
+                endFloor,
+            })) {
+                Main.notify(
+                    'Insomnia Keep-Awake',
+                    `Battery is low (${this._power.batteryPercent}% <= ${endFloor}%). Cannot start keep-awake session.`
+                );
+                this._cancelPills();
+                return;
+            }
+        }
+
         this._remainingSeconds = durationSeconds;
         this._pillsBox.visible = false;
 
@@ -650,6 +715,10 @@ class InsomniaIndicator extends PanelMenu.Button {
     destroy() {
         this._stopTimer();
         this._inhibitor.release();
+        if (this._power) {
+            this._power.destroy();
+            this._power = null;
+        }
         super.destroy();
     }
 });
