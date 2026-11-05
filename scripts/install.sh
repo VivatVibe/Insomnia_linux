@@ -65,6 +65,34 @@ cp "$REPO_ROOT/systemd/insomnia.service" "$SYSTEMD_USER_DIR/"
 systemctl --user daemon-reload
 systemctl --user enable --now insomnia-backstop.timer
 
+# 6. Install GNOME Shell Extension
+EXT_UUID="insomnia@vivatvibe.github.com"
+EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+if [[ -d "$REPO_ROOT/extensions/$EXT_UUID" ]]; then
+  echo "==> Installing GNOME Shell Extension ($EXT_UUID)..."
+  mkdir -p "$EXT_DIR"
+  cp -r "$REPO_ROOT/extensions/$EXT_UUID/"* "$EXT_DIR/"
+  if command -v gnome-extensions >/dev/null 2>&1; then
+    gnome-extensions enable "$EXT_UUID" >/dev/null 2>&1 || true
+    echo "    Extension enabled via gnome-extensions."
+  fi
+  # Also register in gsettings enabled-extensions
+  if command -v gsettings >/dev/null 2>&1; then
+    python3 -c '
+import subprocess, ast, sys
+try:
+    res = subprocess.check_output(["gsettings", "get", "org.gnome.shell", "enabled-extensions"], stderr=subprocess.DEVNULL).decode().strip()
+    val = ast.literal_eval(res)
+    uuid = sys.argv[1]
+    if uuid not in val:
+        val.append(uuid)
+        subprocess.check_call(["gsettings", "set", "org.gnome.shell", "enabled-extensions", str(val)])
+except Exception:
+    pass
+' "$EXT_UUID" || true
+  fi
+fi
+
 echo "==> Insomnia installed successfully!"
 echo "    Executable:     $BIN_DIR/insomnia"
 echo "    Backstop Timer: systemctl --user status insomnia-backstop.timer"

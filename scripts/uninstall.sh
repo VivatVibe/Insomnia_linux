@@ -40,6 +40,14 @@ echo "==> Removing launcher and desktop entry..."
 rm -f "$BIN_DIR/insomnia"
 rm -f "$APP_DIR/insomnia.desktop"
 
+# 3b. Disable and remove GNOME Shell extension
+EXT_UUID="insomnia@vivatvibe.github.com"
+EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
+if command -v gnome-extensions >/dev/null 2>&1; then
+  gnome-extensions disable "$EXT_UUID" 2>/dev/null || true
+fi
+rm -rf "$EXT_DIR"
+
 # 4. Remove icons
 for size in 16 24 32 48 64 128 256 512; do
   rm -f "$ICON_BASE/${size}x${size}/apps/insomnia.png"

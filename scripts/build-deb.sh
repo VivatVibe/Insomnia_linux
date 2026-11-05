@@ -57,6 +57,12 @@ chmod 0644 "$BUILD_DIR/usr/lib/systemd/user/"*
 cp "$REPO_ROOT/systemd/insomnia.desktop" "$BUILD_DIR/usr/share/applications/"
 chmod 0644 "$BUILD_DIR/usr/share/applications/insomnia.desktop"
 
+# 5b. GNOME Shell Extension
+EXT_UUID="insomnia@vivatvibe.github.com"
+mkdir -p "$BUILD_DIR/usr/share/gnome-shell/extensions/$EXT_UUID"
+cp -r "$REPO_ROOT/extensions/$EXT_UUID/"* "$BUILD_DIR/usr/share/gnome-shell/extensions/$EXT_UUID/"
+chmod -R 0644 "$BUILD_DIR/usr/share/gnome-shell/extensions/$EXT_UUID/"*
+
 # 6. Icons
 for size in 16 24 32 48 64 128 256 512; do
   icon_dir="$BUILD_DIR/usr/share/icons/hicolor/${size}x${size}/apps"

@@ -1,0 +1,16 @@
+{
+  "name": "Insomnia Keep-Awake",
+  "description": "Keep your machine awake. Give the session an end time. Native GNOME Top Bar status item with inline duration pills, live countdown, and animated hold-to-end ring.",
+  "uuid": "insomnia@vivatvibe.github.com",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50",
+    "51"
+  ],
+  "url": "https://github.com/VivatVibe/Insomnia_linux",
+  "version": 1
+}

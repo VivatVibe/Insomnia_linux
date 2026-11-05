@@ -34,6 +34,10 @@ class SessionManager:
             except Exception as err:
                 logger.error("Callback error: %s", err)
 
+    @property
+    def current_session(self) -> Optional[Session]:
+        return self.get_active_session()
+
     def get_active_session(self) -> Optional[Session]:
         with RecoveryLock(self.paths):
             data = Store.read_json(self.paths.session_file)

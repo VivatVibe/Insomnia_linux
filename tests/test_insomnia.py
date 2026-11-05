@@ -138,6 +138,38 @@ class TestInsomnia(unittest.TestCase):
         self.assertIn("--disable-backgrounding-occluded-windows", BrowserThrottle.REQUIRED_FLAGS)
         self.assertIn("--disable-renderer-backgrounding", BrowserThrottle.REQUIRED_FLAGS)
 
+    def test_dbus_service_methods(self) -> None:
+        from unittest.mock import MagicMock
+        from insomnia.service import InsomniaDBusService
+        from insomnia.session_manager import SessionManager
+
+        mock_bus = MagicMock()
+        mgr = SessionManager(self.paths, Config())
+        svc = InsomniaDBusService.__new__(InsomniaDBusService)
+        svc.bus = mock_bus
+        svc.session_mgr = mgr
+        svc.paths = self.paths
+        svc.config = Config()
+        svc.quit_cb = None
+        svc.StateChanged = MagicMock()
+
+        ok, rem = svc.StartSession("10m")
+        self.assertTrue(ok)
+        self.assertTrue("09:59" in str(rem) or "10:00" in str(rem))
+
+        state = svc.GetState()
+        self.assertTrue(state[0])
+        self.assertGreater(int(state[1]), 0)
+
+        ok_ext, rem_ext = svc.ExtendSession("5m")
+        self.assertTrue(ok_ext)
+
+        ok_end = svc.EndSession()
+        self.assertTrue(ok_end)
+
+        state_after = svc.GetState()
+        self.assertFalse(state_after[0])
+
 
 if __name__ == "__main__":
     unittest.main()

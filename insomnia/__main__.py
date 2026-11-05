@@ -21,6 +21,7 @@ from insomnia.power.battery import BatteryMonitor
 from insomnia.power.lid import LidController
 from insomnia.session import format_remaining_time, parse_duration_string
 from insomnia.session_manager import SessionManager
+from insomnia.service import InsomniaDBusService
 from insomnia.store import Store
 from insomnia.tray.sni import StatusNotifierTray
 from insomnia.ui.main_window import MainWindow
@@ -61,6 +62,18 @@ def cmd_run(args: argparse.Namespace, paths: Paths) -> int:
 
     loop = GLib.MainLoop()
 
+    def do_quit():
+        session_mgr.end_session()
+        loop.quit()
+
+    dbus_svc = InsomniaDBusService(
+        bus,
+        session_mgr,
+        paths,
+        config,
+        quit_cb=do_quit,
+    )
+
     # Handle termination signals cleanly
     def handle_signal(*_):
         session_mgr.end_session()
@@ -76,6 +89,7 @@ def cmd_run(args: argparse.Namespace, paths: Paths) -> int:
         nonlocal was_lid_closed
         session = session_mgr.tick()
         tray.on_session_changed(session)
+        dbus_svc.notify_state_changed()
 
         # Check lid state transition
         is_closed = LidController.is_lid_closed()
