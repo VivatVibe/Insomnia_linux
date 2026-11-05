@@ -2,7 +2,7 @@
 Name=Insomnia
 GenericName=Keep-Awake & Lid Safety
 Comment=Prevent sleep and lid-close suspension with journaled recovery
-Exec=insomnia run
+Exec=insomnia gui
 Icon=insomnia
 Terminal=false
 Type=Application

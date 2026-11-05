@@ -4,12 +4,15 @@ import argparse
 import json
 import logging
 import signal
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 import dbus
 from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib, GLibUnix
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, GLibUnix, Gtk
 
 from insomnia.backstop import BackstopRunner
 from insomnia.config import Config
@@ -20,6 +23,7 @@ from insomnia.session import format_remaining_time, parse_duration_string
 from insomnia.session_manager import SessionManager
 from insomnia.store import Store
 from insomnia.tray.sni import StatusNotifierTray
+from insomnia.ui.main_window import MainWindow
 from insomnia.ui.settings_dialog import SettingsDialog
 
 logger = logging.getLogger("insomnia")
@@ -179,12 +183,39 @@ def cmd_settings(args: argparse.Namespace, paths: Paths) -> int:
     return 0
 
 
+def cmd_gui(args: argparse.Namespace, paths: Paths) -> int:
+    config_data = Store.read_json(paths.config_file) or {}
+    config = Config.from_dict(config_data)
+    session_mgr = SessionManager(paths, config)
+
+    # If background tray daemon is not running, spawn it in background
+    try:
+        bus = dbus.SessionBus()
+        if not bus.name_has_owner("org.vivatvibe.Insomnia"):
+            subprocess.Popen([sys.executable, "-m", "insomnia", "run"], start_new_session=True)
+    except Exception:
+        pass
+
+    win = MainWindow(paths, config, session_mgr)
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+    return 0
+
+
 def main() -> None:
+    if len(sys.argv) == 1:
+        sys.argv.append("gui")
+
     parser = argparse.ArgumentParser(
         prog="insomnia",
         description="Insomnia Linux: keep-awake session manager and lid-close engine for Ubuntu GNOME",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
+
+    # gui (default)
+    p_gui = subparsers.add_parser("gui", help="Open the Insomnia control center window")
+    p_gui.set_defaults(func=cmd_gui)
 
     # run
     p_run = subparsers.add_parser("run", help="Run the tray indicator and background daemon")
