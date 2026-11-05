@@ -14,11 +14,12 @@ from insomnia.power.lid import LidController
 from insomnia.session import Session, format_remaining_time
 from insomnia.session_manager import SessionManager
 from insomnia.store import Store
+from insomnia.ui.animated_eye import AnimatedEye, HoldToEndButton
 from insomnia.ui.settings_dialog import SettingsDialog
 
 
 class MainWindow(Gtk.Window):
-    """Modern GNOME Control Center window for Insomnia keep-awake."""
+    """Modern GNOME Control Center window with vector animated eye and hold-to-end ring."""
 
     def __init__(self, paths: Paths, config: Config, session_mgr: SessionManager) -> None:
         super().__init__(title="Insomnia")
@@ -26,7 +27,7 @@ class MainWindow(Gtk.Window):
         self.config = config
         self.session_mgr = session_mgr
 
-        self.set_default_size(440, 520)
+        self.set_default_size(440, 540)
         self.set_resizable(False)
         self.set_position(Gtk.WindowPosition.CENTER)
 
@@ -43,32 +44,47 @@ class MainWindow(Gtk.Window):
             self.set_icon_from_file(str(icon_path))
 
         # Main vertical container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         main_box.set_margin_start(24)
         main_box.set_margin_end(24)
-        main_box.set_margin_top(20)
-        main_box.set_margin_bottom(20)
+        main_box.set_margin_top(16)
+        main_box.set_margin_bottom(16)
         self.add(main_box)
 
-        # 1. Header: Eye Artwork + App Name
-        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.image_eye = Gtk.Image()
-        self._update_eye_image(active=False)
-        header_box.pack_start(self.image_eye, False, False, 0)
+        # 1. Header: Vector Animated Eye + App Name
+        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+        eye_event_box = Gtk.EventBox()
+        self.eye = AnimatedEye(size=100)
+        eye_event_box.add(self.eye)
+        eye_event_box.connect("button-press-event", lambda *_: self.eye.blink())
+        header_box.pack_start(eye_event_box, False, False, 0)
 
         lbl_title = Gtk.Label()
-        lbl_title.set_markup("<span size='x-large' weight='bold'>Insomnia</span>")
+        lbl_title.set_markup("<span size='large' weight='bold'>Insomnia</span>")
         header_box.pack_start(lbl_title, False, False, 0)
 
         self.lbl_status = Gtk.Label()
         header_box.pack_start(self.lbl_status, False, False, 0)
         main_box.pack_start(header_box, False, False, 0)
 
-        # 2. Big Action Button (Start / Stop)
-        self.btn_main_action = Gtk.Button()
-        self.btn_main_action.set_can_default(True)
-        self.btn_main_action.connect("clicked", self._on_main_action_clicked)
-        main_box.pack_start(self.btn_main_action, False, False, 0)
+        # 2. Main Action Container: Start Button OR HoldToEndButton
+        self.action_stack = Gtk.Stack()
+        self.action_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.action_stack.set_transition_duration(200)
+
+        # Inactive state button
+        self.btn_start = Gtk.Button(label="Keep Machine Awake (4 Hours)")
+        self.btn_start.get_style_context().add_class("suggested-action")
+        self.btn_start.set_size_request(-1, 46)
+        self.btn_start.connect("clicked", self._on_start_clicked)
+        self.action_stack.add_named(self.btn_start, "start")
+
+        # Active state hold-to-end button
+        self.btn_hold_end = HoldToEndButton(on_complete=self._on_hold_end_complete)
+        self.action_stack.add_named(self.btn_hold_end, "hold_end")
+
+        main_box.pack_start(self.action_stack, False, False, 0)
 
         # 3. Quick Durations Section
         lbl_quick = Gtk.Label(xalign=0)
@@ -94,7 +110,7 @@ class MainWindow(Gtk.Window):
 
         main_box.pack_start(grid_durations, False, False, 0)
 
-        # 4. Add Time row (enabled when active)
+        # 4. Add Time row (visible & active when session running)
         self.box_extend = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.box_extend.set_homogeneous(True)
 
@@ -105,7 +121,7 @@ class MainWindow(Gtk.Window):
 
         main_box.pack_start(self.box_extend, False, False, 0)
 
-        # 5. System Status Info Bar
+        # 5. System Status Info Frame
         info_frame = Gtk.Frame()
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         info_box.set_margin_start(12)
@@ -123,7 +139,7 @@ class MainWindow(Gtk.Window):
         info_frame.add(info_box)
         main_box.pack_start(info_frame, False, False, 0)
 
-        # 6. Bottom row: Settings button and note
+        # 6. Bottom Controls: Settings and quit note
         bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         btn_settings = Gtk.Button(label="Settings...")
         btn_settings.connect("clicked", self._open_settings)
@@ -141,18 +157,12 @@ class MainWindow(Gtk.Window):
         # Connect periodic timer every 1 second for live countdown
         GLib.timeout_add_seconds(1, self._update_ui)
 
-    def _update_eye_image(self, active: bool) -> None:
-        file_name = "insomnia-128.png" if active else "insomnia-idle-128.png"
-        path = self.icons_dir / file_name
-        if path.exists():
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), 80, 80, True)
-            self.image_eye.set_from_pixbuf(pixbuf)
-
     def _update_ui(self) -> bool:
         session = self.session_mgr.get_active_session()
         is_active = session is not None
 
-        self._update_eye_image(active=is_active)
+        # Update animated vector eye aperture and spring
+        self.eye.set_awake(is_active)
 
         if is_active:
             rem_str = format_remaining_time(session.remaining())
@@ -160,18 +170,14 @@ class MainWindow(Gtk.Window):
                 f"<span size='medium' weight='bold' color='#2ec27e'>● ACTIVE ({rem_str} Remaining)</span>\n"
                 f"<span size='small' color='#666666'>Sleep and lid-switch suspension inhibited</span>"
             )
-            self.btn_main_action.set_label("End Session Early")
-            self.btn_main_action.get_style_context().remove_class("suggested-action")
-            self.btn_main_action.get_style_context().add_class("destructive-action")
+            self.action_stack.set_visible_child_name("hold_end")
             self.box_extend.set_sensitive(True)
         else:
             self.lbl_status.set_markup(
                 "<span size='medium' weight='bold' color='#888888'>○ INACTIVE (Sleep Permitted)</span>\n"
                 "<span size='small' color='#666666'>Click below to prevent sleep and lid-close suspension</span>"
             )
-            self.btn_main_action.set_label("Keep Awake (4 Hours)")
-            self.btn_main_action.get_style_context().remove_class("destructive-action")
-            self.btn_main_action.get_style_context().add_class("suggested-action")
+            self.action_stack.set_visible_child_name("start")
             self.box_extend.set_sensitive(False)
 
         # Update battery and hardware stats
@@ -187,12 +193,12 @@ class MainWindow(Gtk.Window):
 
         return True
 
-    def _on_main_action_clicked(self, widget: Gtk.Widget) -> None:
-        session = self.session_mgr.get_active_session()
-        if session is None:
-            self.session_mgr.start_session(self.config.default_preset)
-        else:
-            self.session_mgr.end_session()
+    def _on_start_clicked(self, widget: Gtk.Widget) -> None:
+        self.session_mgr.start_session(self.config.default_preset)
+        self._update_ui()
+
+    def _on_hold_end_complete(self) -> None:
+        self.session_mgr.end_session()
         self._update_ui()
 
     def _start_custom(self, seconds: float) -> None:
