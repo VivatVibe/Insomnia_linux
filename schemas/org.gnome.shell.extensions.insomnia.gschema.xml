@@ -6,10 +6,15 @@
       <summary>Low power battery floor percentage</summary>
       <description>Switch to power-saver profile when battery falls below this level.</description>
     </key>
+    <key name="battery-cutoff-enabled" type="b">
+      <default>true</default>
+      <summary>Enable battery floor cutoff</summary>
+      <description>Automatically end keep-awake session when battery falls below the cutoff threshold.</description>
+    </key>
     <key name="end-floor" type="i">
-      <default>0</default>
+      <default>20</default>
       <summary>End session battery floor percentage</summary>
-      <description>Automatically end keep-awake session when battery falls below this percentage (0 to disable).</description>
+      <description>Automatically end keep-awake session when battery falls to or below this percentage.</description>
     </key>
     <key name="prevent-lid-sleep" type="b">
       <default>true</default>
@@ -20,6 +25,16 @@
       <default>true</default>
       <summary>Auto activate power-saver profile</summary>
       <description>Automatically switch power profiles daemon on low battery.</description>
+    </key>
+    <key name="disable-screen-lock" type="b">
+      <default>false</default>
+      <summary>Disable screen lock during active sessions</summary>
+      <description>Temporarily disable automatic password prompt on wake while keep-awake is active.</description>
+    </key>
+    <key name="prevent-screen-blank" type="b">
+      <default>false</default>
+      <summary>Keep screen lit during active sessions</summary>
+      <description>Inhibit GNOME display idle to prevent screen from turning black during sessions.</description>
     </key>
   </schema>
 </schemalist>
