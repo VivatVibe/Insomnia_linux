@@ -78,5 +78,28 @@ export default class InsomniaPreferences extends ExtensionPreferences {
             GObject.BindingFlags.SYNC_CREATE
         );
         powerGroup.add(endFloorRow);
+
+        // Group: Display & Screen Lock
+        const displayGroup = new Adw.PreferencesGroup({
+            title: _('Display & Screen Lock'),
+            description: _('Configure screen blanking and lock screen behavior during awake sessions.'),
+        });
+        page.add(displayGroup);
+
+        // Disable screen lock switch
+        const screenLockRow = new Adw.SwitchRow({
+            title: _('Disable Screen Lock When Waking'),
+            subtitle: _('Wake the screen directly without asking for a password during an active session.'),
+        });
+        settings.bind('disable-screen-lock', screenLockRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        displayGroup.add(screenLockRow);
+
+        // Prevent screen blank switch
+        const screenBlankRow = new Adw.SwitchRow({
+            title: _('Keep Display Lit (Never Blank)'),
+            subtitle: _('Prevent the screen from turning off or going black during an active session.'),
+        });
+        settings.bind('prevent-screen-blank', screenBlankRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        displayGroup.add(screenBlankRow);
     }
 }

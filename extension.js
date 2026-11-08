@@ -8,7 +8,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import { parseDurationSeconds, formatTimeRemaining, LogindInhibitor, shouldCutoffSession } from './lib/utils.js';
+import { parseDurationSeconds, formatTimeRemaining, LogindInhibitor, shouldCutoffSession, ScreenLockManager, DisplayInhibitor } from './lib/utils.js';
 
 // UPower & PowerProfiles Monitor
 class PowerMonitor {
@@ -376,6 +376,8 @@ class InsomniaIndicator extends PanelMenu.Button {
         this._timerId = null;
 
         this._inhibitor = new LogindInhibitor();
+        this._screenLock = new ScreenLockManager();
+        this._displayInhibitor = new DisplayInhibitor();
         this._power = new PowerMonitor(this._settings, (batteryPct, threshold) => {
             if (this._mode === 'RUNNING') {
                 this._endSession();
@@ -633,6 +635,15 @@ class InsomniaIndicator extends PanelMenu.Button {
             this._updateMenuStatus();
         });
 
+        // Screen lock & display idle management
+        const disableLock = this._settings ? this._settings.get_boolean('disable-screen-lock') : false;
+        this._screenLock.apply(disableLock);
+
+        const preventBlank = this._settings ? this._settings.get_boolean('prevent-screen-blank') : false;
+        if (preventBlank) {
+            this._displayInhibitor.acquire();
+        }
+
         this._mode = 'RUNNING';
         this._eyeMark.setRunning(true);
         const remFormatted = formatTimeRemaining(this._remainingSeconds);
@@ -663,6 +674,8 @@ class InsomniaIndicator extends PanelMenu.Button {
     _endSession() {
         this._stopTimer();
         this._inhibitor.release();
+        this._screenLock.restore();
+        this._displayInhibitor.release();
         this._remainingSeconds = 0;
         this._mode = 'IDLE';
 
@@ -715,6 +728,8 @@ class InsomniaIndicator extends PanelMenu.Button {
     destroy() {
         this._stopTimer();
         this._inhibitor.release();
+        this._screenLock.restore();
+        this._displayInhibitor.release();
         if (this._power) {
             this._power.destroy();
             this._power = null;

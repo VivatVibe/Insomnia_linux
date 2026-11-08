@@ -26,5 +26,15 @@
       <summary>Auto activate power-saver profile</summary>
       <description>Automatically switch power profiles daemon on low battery.</description>
     </key>
+    <key name="disable-screen-lock" type="b">
+      <default>false</default>
+      <summary>Disable screen lock during active sessions</summary>
+      <description>Temporarily disable automatic password prompt on wake while keep-awake is active.</description>
+    </key>
+    <key name="prevent-screen-blank" type="b">
+      <default>false</default>
+      <summary>Keep screen lit during active sessions</summary>
+      <description>Inhibit GNOME display idle to prevent screen from turning black during sessions.</description>
+    </key>
   </schema>
 </schemalist>
